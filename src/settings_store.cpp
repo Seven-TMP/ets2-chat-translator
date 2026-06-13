@@ -1,12 +1,58 @@
 #include "settings_store.h"
 #include "text_codec.h"
 
+#include <windows.h>
+#include <wincrypt.h>
+
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <vector>
 
 namespace
 {
+const wchar_t* kSecretPrefix = L"enc:dpapi:";
+
+bool StartsWith(const std::wstring& value, const wchar_t* prefix)
+{
+    return value.rfind(prefix, 0) == 0;
+}
+
+std::vector<BYTE> Base64Decode(const std::wstring& value)
+{
+    DWORD needed = 0;
+    if (!CryptStringToBinaryW(value.c_str(), 0, CRYPT_STRING_BASE64, nullptr, &needed, nullptr, nullptr) || needed == 0) {
+        return {};
+    }
+    std::vector<BYTE> out(needed);
+    if (!CryptStringToBinaryW(value.c_str(), 0, CRYPT_STRING_BASE64, out.data(), &needed, nullptr, nullptr)) {
+        return {};
+    }
+    out.resize(needed);
+    return out;
+}
+
+std::wstring DecryptSecret(std::wstring value)
+{
+    if (!StartsWith(value, kSecretPrefix)) return value;
+
+    std::wstring payload = value.substr(wcslen(kSecretPrefix));
+    std::vector<BYTE> encrypted = Base64Decode(payload);
+    if (encrypted.empty()) return L"";
+
+    DATA_BLOB in{};
+    in.pbData = encrypted.data();
+    in.cbData = (DWORD)encrypted.size();
+    DATA_BLOB out{};
+    if (!CryptUnprotectData(&in, nullptr, nullptr, nullptr, nullptr, 0, &out)) {
+        return L"";
+    }
+
+    std::string utf8((const char*)out.pbData, (const char*)out.pbData + out.cbData);
+    LocalFree(out.pbData);
+    return text::FromUtf8(utf8);
+}
+
 std::wstring Jstr(const std::string& json, const std::string& key, const std::wstring& fallback = L"")
 {
     std::wstring v = text::JsonString(json, key);
@@ -114,11 +160,11 @@ AppSettings Load(const std::wstring& path)
             p.label = Jstr(b, "label", Jstr(b, "name", p.kind));
             p.enabled = Jbool(b, "enabled", true);
             p.baseUrl = Jstr(b, "base_url");
-            p.apiKey = Jstr(b, "api_key");
+            p.apiKey = DecryptSecret(Jstr(b, "api_key"));
             p.model = Jstr(b, "model");
             p.sourceLanguage = Jstr(b, "source", Jstr(b, "source_lang", L"auto"));
             p.targetLanguage = Jstr(b, "target", Jstr(b, "target_lang", s.runtime.targetLanguage));
-            p.apiSecret = Jstr(b, "api_secret", Jstr(b, "secret_key"));
+            p.apiSecret = DecryptSecret(Jstr(b, "api_secret", Jstr(b, "secret_key")));
             if (!p.kind.empty()) s.providers.push_back(p);
         }
     }

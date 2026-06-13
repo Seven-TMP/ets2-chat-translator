@@ -1952,10 +1952,29 @@ void TranslateEngine::Submit(unsigned int id, const std::wstring& value)
 int ProviderIntervalMs(const std::wstring& kind)
 {
     std::wstring lower = LowerAscii(kind);
-    if (lower == L"mymemory") return 450;
-    if (lower == L"andeer") return 350;
-    if (lower == L"libretranslate" || lower == L"libre_translate") return 300;
-    return 35;
+    if (lower == L"mymemory") return 260;
+    if (lower == L"andeer") return 220;
+    if (lower == L"libretranslate" || lower == L"libre_translate") return 180;
+    if (lower == L"baidu" || lower == L"baidu_translate") return 90;
+    if (lower == L"youdao") return 90;
+    if (lower == L"tencent" || lower == L"tencent_cloud" || lower == L"tencent_tmt") return 70;
+    if (lower == L"aliyun" || lower == L"alibaba" || lower == L"alibaba_cloud" || lower == L"alimt") return 70;
+    if (lower == L"volcengine" || lower == L"volc" || lower == L"volc_translate" || lower == L"huoshan") return 70;
+    return 0;
+}
+
+int ProviderMaxInFlight(const std::wstring& kind)
+{
+    std::wstring lower = LowerAscii(kind);
+    if (lower == L"mymemory" || lower == L"andeer") return 2;
+    if (lower == L"libretranslate" || lower == L"libre_translate") return 3;
+    if (lower == L"baidu" || lower == L"baidu_translate") return 4;
+    if (lower == L"youdao") return 4;
+    if (lower == L"tencent" || lower == L"tencent_cloud" || lower == L"tencent_tmt") return 6;
+    if (lower == L"aliyun" || lower == L"alibaba" || lower == L"alibaba_cloud" || lower == L"alimt") return 6;
+    if (lower == L"volcengine" || lower == L"volc" || lower == L"volc_translate" || lower == L"huoshan") return 6;
+    if (lower == L"deepl" || lower == L"google_cloud" || lower == L"google_translate" || lower == L"microsoft" || lower == L"azure_translator") return 6;
+    return 8;
 }
 
 bool RetryableProviderError(const std::wstring& error)
@@ -2057,12 +2076,18 @@ std::wstring TranslateEngine::RunProviders(const std::wstring& value, HttpAgent&
         std::wstring requestAt = NowStamp();
         auto totalStarted = std::chrono::steady_clock::now();
         int attemptCount = 0;
-        int maxAttempts = providers_.size() == 1 ? 2 : 1;
+        int maxAttempts = (providers_.size() == 1 && PendingJobCount() <= 2) ? 2 : 1;
         for (int attempt = 0; attempt < maxAttempts; ++attempt) {
             ++attemptCount;
             error.clear();
-            WaitProviderTurn(i);
-            out = p->Translate(value, runtime_, http, error);
+            {
+                ProviderSlot slot = AcquireProviderSlot(i);
+                if (!slot) {
+                    error = L"provider busy";
+                    break;
+                }
+                out = p->Translate(value, runtime_, http, error);
+            }
             bool ok = !LooksUntranslated(value, out, runtime_);
             if (ok || !RetryableProviderError(error)) break;
             if (attempt + 1 < maxAttempts && running_) {
@@ -2115,29 +2140,64 @@ void TranslateEngine::RememberCache(const std::wstring& text, const std::wstring
     cache_[text] = translated;
 }
 
-void TranslateEngine::WaitProviderTurn(size_t index)
+TranslateEngine::ProviderSlot::ProviderSlot(TranslateEngine& engine, size_t index, bool acquired)
+    : engine_(&engine), index_(index), acquired_(acquired)
+{
+}
+
+TranslateEngine::ProviderSlot::~ProviderSlot()
+{
+    if (engine_ && acquired_) engine_->ReleaseProviderSlot(index_);
+}
+
+TranslateEngine::ProviderSlot::ProviderSlot(ProviderSlot&& other) noexcept
+    : engine_(other.engine_), index_(other.index_), acquired_(other.acquired_)
+{
+    other.engine_ = nullptr;
+    other.acquired_ = false;
+}
+
+TranslateEngine::ProviderSlot TranslateEngine::AcquireProviderSlot(size_t index)
 {
     int intervalMs = 80;
     if (index < providers_.size()) intervalMs = ProviderIntervalMs(providers_[index]->Kind());
+    int maxInFlight = 1;
+    if (index < providers_.size()) maxInFlight = ProviderMaxInFlight(providers_[index]->Kind());
 
     while (running_) {
         auto now = std::chrono::steady_clock::now();
         std::chrono::steady_clock::time_point waitUntil{};
         {
             std::lock_guard<std::mutex> g(providerHealthLock_);
-            if (index >= providerHealth_.size()) return;
+            if (index >= providerHealth_.size()) return ProviderSlot(*this, index, false);
             auto& h = providerHealth_[index];
-            if (h.nextAllowed <= now) {
-                h.nextAllowed = now + std::chrono::milliseconds(intervalMs);
-                return;
+            if (h.active < maxInFlight && h.nextAllowed <= now) {
+                ++h.active;
+                if (intervalMs > 0) h.nextAllowed = now + std::chrono::milliseconds(intervalMs);
+                return ProviderSlot(*this, index, true);
             }
-            waitUntil = h.nextAllowed;
+            waitUntil = h.nextAllowed > now ? h.nextAllowed : now + std::chrono::milliseconds(25);
         }
 
         auto waitMs = std::chrono::duration_cast<std::chrono::milliseconds>(waitUntil - now);
         if (waitMs.count() <= 0) continue;
-        std::this_thread::sleep_for((std::min)(waitMs, std::chrono::milliseconds(200)));
+        std::this_thread::sleep_for((std::min)(waitMs, std::chrono::milliseconds(80)));
     }
+    return ProviderSlot(*this, index, false);
+}
+
+void TranslateEngine::ReleaseProviderSlot(size_t index)
+{
+    std::lock_guard<std::mutex> g(providerHealthLock_);
+    if (index >= providerHealth_.size()) return;
+    auto& h = providerHealth_[index];
+    if (h.active > 0) --h.active;
+}
+
+size_t TranslateEngine::PendingJobCount() const
+{
+    std::lock_guard<std::mutex> g(jobsLock_);
+    return jobs_.size();
 }
 
 bool TranslateEngine::ProviderCoolingDown(size_t index, std::chrono::steady_clock::time_point now) const
@@ -2155,17 +2215,22 @@ void TranslateEngine::NoteProviderResult(size_t index, bool success, const std::
     if (success) {
         h.failures = 0;
         h.coolUntil = {};
+        if (h.nextAllowed < std::chrono::steady_clock::now()) h.nextAllowed = {};
         return;
     }
 
     ++h.failures;
+    auto now = std::chrono::steady_clock::now();
+    if (error.find(L"HTTP 429") != std::wstring::npos || error.find(L"ACCESS_FREQUENCY_LIMITED") != std::wstring::npos) {
+        h.nextAllowed = (std::max)(h.nextAllowed, now + std::chrono::milliseconds((std::min)(2500, 400 + h.failures * 350)));
+    }
     if (PermanentProviderError(error)) {
-        h.coolUntil = std::chrono::steady_clock::now() + std::chrono::minutes(3);
+        h.coolUntil = now + std::chrono::minutes(3);
         return;
     }
     if (RetryableProviderError(error) && h.failures >= 2) {
         int seconds = (std::min)(45, 8 + h.failures * 6);
-        h.coolUntil = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+        h.coolUntil = now + std::chrono::seconds(seconds);
     }
 }
 

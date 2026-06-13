@@ -453,7 +453,11 @@ function readPresets() {
   if (!fs.existsSync(file)) return [];
   try {
     const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return Array.isArray(parsed.presets) ? parsed.presets.filter((item) => item && item.name && item.config) : [];
+    return Array.isArray(parsed.presets)
+      ? parsed.presets
+        .filter((item) => item && item.name && item.config)
+        .map((item) => ({ ...item, config: transformProviderSecrets(item.config, 'decrypt') }))
+      : [];
   } catch {
     return [];
   }
@@ -462,7 +466,8 @@ function readPresets() {
 function writePresets(presets) {
   const file = presetsPath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, JSON.stringify({ presets }, null, 2), 'utf8');
+  const stored = presets.map((item) => ({ ...item, config: transformProviderSecrets(item.config, 'encrypt') }));
+  fs.writeFileSync(file, JSON.stringify({ presets: stored }, null, 2), 'utf8');
   return presets;
 }
 
@@ -491,6 +496,82 @@ function deletePreset(name) {
   const cleanName = normalizePresetName(name);
   if (!cleanName) return readPresets();
   return writePresets(readPresets().filter((item) => item.name.toLowerCase() !== cleanName.toLowerCase()));
+}
+
+const CONFIG_SECRET_PREFIX = 'enc:dpapi:';
+const CONFIG_SECRET_FIELDS = ['api_key', 'api_secret', 'secret_key'];
+
+function runProtectedData(action, value) {
+  const prelude = `
+Add-Type -AssemblyName System.Security
+[Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+[Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+`;
+  const script = action === 'protect'
+    ? `${prelude}
+$plain = [Console]::In.ReadToEnd()
+$bytes = [Text.Encoding]::UTF8.GetBytes($plain)
+$protected = [Security.Cryptography.ProtectedData]::Protect($bytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+[Console]::Out.Write([Convert]::ToBase64String($protected))
+`
+    : `${prelude}
+$cipher = [Console]::In.ReadToEnd().Trim()
+$bytes = [Convert]::FromBase64String($cipher)
+$plain = [Security.Cryptography.ProtectedData]::Unprotect($bytes, $null, [Security.Cryptography.DataProtectionScope]::CurrentUser)
+[Console]::Out.Write([Text.Encoding]::UTF8.GetString($plain))
+`;
+  try {
+    return childProcess.execFileSync('powershell.exe', [
+      '-NoProfile',
+      '-NonInteractive',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-Command',
+      script
+    ], {
+      input: String(value || ''),
+      encoding: 'utf8',
+      windowsHide: true,
+      maxBuffer: 1024 * 1024
+    });
+  } catch (error) {
+    const detail = error.stderr ? String(error.stderr).trim() : error.message;
+    throw new Error(`密钥${action === 'protect' ? '加密' : '解密'}失败：${detail}`);
+  }
+}
+
+function isEncryptedSecret(value) {
+  return typeof value === 'string' && value.startsWith(CONFIG_SECRET_PREFIX);
+}
+
+function encryptConfigSecret(value) {
+  if (typeof value !== 'string' || !value || isEncryptedSecret(value)) return value || '';
+  return `${CONFIG_SECRET_PREFIX}${runProtectedData('protect', value)}`;
+}
+
+function decryptConfigSecret(value) {
+  if (!isEncryptedSecret(value)) return value || '';
+  return runProtectedData('unprotect', value.slice(CONFIG_SECRET_PREFIX.length));
+}
+
+function transformProviderSecrets(config, mode) {
+  const next = JSON.parse(JSON.stringify(config || {}));
+  for (const provider of next.providers || []) {
+    for (const field of CONFIG_SECRET_FIELDS) {
+      if (typeof provider[field] !== 'string' || !provider[field]) continue;
+      provider[field] = mode === 'encrypt' ? encryptConfigSecret(provider[field]) : decryptConfigSecret(provider[field]);
+    }
+  }
+  return next;
+}
+
+function decryptConfigText(jsonText) {
+  if (!jsonText) return jsonText;
+  return JSON.stringify(transformProviderSecrets(JSON.parse(jsonText), 'decrypt'), null, 2);
+}
+
+function encryptConfigText(jsonText) {
+  return JSON.stringify(transformProviderSecrets(JSON.parse(jsonText), 'encrypt'), null, 2);
 }
 
 function compactText(value, max = 260) {
@@ -1017,7 +1098,7 @@ async function testProvider(provider, runtime) {
 }
 
 async function testConfigText(jsonText) {
-  const config = JSON.parse(jsonText);
+  const config = transformProviderSecrets(JSON.parse(jsonText), 'decrypt');
   const providers = (config.providers || []).filter((provider) => provider && provider.enabled && provider.kind);
   const runtime = {
     target: config.target_lang || 'zh-CN',
@@ -1456,7 +1537,7 @@ ipcMain.handle('uninstall-dll', (_event, game, ets2Path) => {
 ipcMain.handle('read-config', (_event, _game, ets2Path) => {
   const file = configPath(ets2Path);
   if (!fs.existsSync(file)) return null;
-  return fs.readFileSync(file, 'utf8');
+  return decryptConfigText(fs.readFileSync(file, 'utf8'));
 });
 
 ipcMain.handle('write-config', (_event, game, ets2Path, jsonText) => {
@@ -1464,8 +1545,7 @@ ipcMain.handle('write-config', (_event, game, ets2Path, jsonText) => {
   if (!looksLikeGame(ets2Path, game)) throw new Error(`请先选择有效的 ${def.shortName} 安装目录`);
   const file = configPath(ets2Path);
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  JSON.parse(jsonText);
-  fs.writeFileSync(file, jsonText, 'utf8');
+  fs.writeFileSync(file, encryptConfigText(jsonText), 'utf8');
   return installState(game, ets2Path);
 });
 

@@ -65,14 +65,34 @@ private:
     struct ProviderHealth
     {
         int failures = 0;
+        int active = 0;
         std::chrono::steady_clock::time_point coolUntil{};
         std::chrono::steady_clock::time_point nextAllowed{};
+    };
+
+    class ProviderSlot
+    {
+    public:
+        ProviderSlot(TranslateEngine& engine, size_t index, bool acquired);
+        ~ProviderSlot();
+        ProviderSlot(const ProviderSlot&) = delete;
+        ProviderSlot& operator=(const ProviderSlot&) = delete;
+        ProviderSlot(ProviderSlot&& other) noexcept;
+        ProviderSlot& operator=(ProviderSlot&& other) noexcept = delete;
+        explicit operator bool() const { return acquired_; }
+
+    private:
+        TranslateEngine* engine_ = nullptr;
+        size_t index_ = 0;
+        bool acquired_ = false;
     };
 
     void Worker();
     std::wstring RunProviders(const std::wstring& text, HttpAgent& http);
     void RememberCache(const std::wstring& text, const std::wstring& translated);
-    void WaitProviderTurn(size_t index);
+    ProviderSlot AcquireProviderSlot(size_t index);
+    void ReleaseProviderSlot(size_t index);
+    size_t PendingJobCount() const;
     bool ProviderCoolingDown(size_t index, std::chrono::steady_clock::time_point now) const;
     void NoteProviderResult(size_t index, bool success, const std::wstring& error);
     void LogLine(const std::wstring& line) const;

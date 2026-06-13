@@ -1,10 +1,10 @@
 {
-  "version": "0.3.6",
-  "tag_name": "v0.3.6",
-  "name": "v0.3.6",
-  "download_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/download/v0.3.6/ETS2-Chat-Translator-Manager-Setup-0.3.6.exe",
-  "asset_name": "ETS2-Chat-Translator-Manager-Setup-0.3.6.exe",
-  "size": 82683965,
-  "html_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/tag/v0.3.6",
-  "notes": "### v0.3.6\n\n- 管理器 UI 焕新，调整整体视觉风格、顶部标题、配置预览区和按钮状态。\n- 配置预览新增一键复制，方便快速备份和排查配置。\n- 浏览器预览与正式 APP 保持同一套完整镜像列表，避免只显示少量节点。\n- 镜像列表区域加高并保留滚动，测速排行能展示更多节点。\n- README 调整 DeepSeek、OpenAI 兼容和 Anthropic Claude 的说明文案。"
+  "version": "0.3.7",
+  "tag_name": "v0.3.7",
+  "name": "v0.3.7",
+  "download_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/download/v0.3.7/ETS2-Chat-Translator-Manager-Setup-0.3.7.exe",
+  "asset_name": "ETS2-Chat-Translator-Manager-Setup-0.3.7.exe",
+  "size": 82686828,
+  "html_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/tag/v0.3.7",
+  "notes": "### v0.3.7\n\n- 优化 Provider 请求调度，减少高峰聊天时的串行等待。\n- 正常请求允许更高并发，遇到 429 或频率限制后再自动降速。\n- 队列积压时减少单 Provider 额外重试，避免旧请求长期占住 Worker。\n- 管理器保存配置和预设时会加密 api_key / api_secret，插件读取时自动解密使用。\n- 日志与排错章节新增 Issues 提交流程和日志片段要求。"
 }

@@ -103,7 +103,7 @@ graph TD
 ```
 
 1. **下载并运行安装包**：
-   双击运行 `build\installer\ETS2-Chat-Translator-Manager-Setup-0.3.6.exe` 进行安装。
+   双击运行 `build\installer\ETS2-Chat-Translator-Manager-Setup-0.3.7.exe` 进行安装。
 2. **打开管理器**：启动安装好的 `ETS2 Chat Translator Manager`。
 3. **识别游戏目录**：选择对应的游戏（ETS2 或 ATS），管理器会尝试自动定位。若未找到，可手动选择游戏主程序所在的 bin 目录。
 4. **一键部署 DLL**：点击 `安装 / 更新 DLL` 按钮。
@@ -251,6 +251,8 @@ graph TD
 | `font_size` | Integer | `18` | 游戏内悬浮窗的字体大小 (px) |
 | `providers` | Array | `[...]` | 翻译提供商列表。**系统会按数组顺序尝试，首位失败自动降级至下一位** |
 
+> `api_key`、`api_secret`、`secret_key` 会在管理器保存时自动加密写入配置文件，格式类似 `enc:dpapi:...`。管理器读取时会自动解密并显示明文，插件运行时也会自动解密使用。加密使用 Windows 当前用户 DPAPI，通常只能由同一台电脑的同一 Windows 用户解密。
+
 ---
 
 ## 🛠️ 本地开发与构建
@@ -278,34 +280,51 @@ build/
 ├── ets2_chat_translator_app/                       # 绿色版管理器 (绿色免安装)
 │   └── ETS2 Chat Translator Manager.exe
 └── installer/
-    └── ETS2-Chat-Translator-Manager-Setup-0.3.6.exe # 独立安装包 (集成 NSIS)
+    └── ETS2-Chat-Translator-Manager-Setup-0.3.7.exe # 独立安装包 (集成 NSIS)
 ```
 
 ---
 
 ## 🔍 日志与排错
 
-当插件运行异常或游戏内无法显示悬浮窗时，可通过以下步骤定位问题。
+遇到不翻译、翻译很慢、悬浮窗不显示、API 报错等问题时，请先看日志。日志里会记录插件初始化、配置热重载、翻译队列、HTTP 状态和响应预览。
 
-### 1. 查找日志文件
-插件所有的操作日志都会输出到模拟器自带的 `game.log.txt` 中。请根据您的游戏打开对应的日志：
-* **ETS2 路径**: `C:\Users\<您的用户名>\Documents\Euro Truck Simulator 2\game.log.txt`
-* **ATS 路径**: `C:\Users\<您的用户名>\Documents\American Truck Simulator\game.log.txt`
+### 1. 日志位置
 
-### 2. 快速排查关键字
-在日志文件中搜索以下关键字：
-* `[ChatTranslator]`：主插件初始化、热重载与悬浮窗状态信息。
-* `[TranslateHTTP]`：HTTP 请求状态、耗时以及响应预览。
-* `[Translate]`：翻译队列及降级触发逻辑。
+| 游戏 | 日志文件 |
+| :--- | :--- |
+| ETS2 | `C:\Users\<您的用户名>\Documents\Euro Truck Simulator 2\game.log.txt` |
+| ATS | `C:\Users\<您的用户名>\Documents\American Truck Simulator\game.log.txt` |
 
-### 3. 常见 HTTP 错误指南
+### 2. 搜索关键字
+
+| 关键字 | 用途 |
+| :--- | :--- |
+| `[ChatTranslator]` | 插件初始化、配置热重载、悬浮窗状态、是否跳过翻译 |
+| `[Translate]` | 翻译入队、缓存命中、本地字典、Provider 降级、失败原因 |
+| `[TranslateHTTP]` | HTTP 状态码、接口耗时、响应预览 |
+
+### 3. 提交 Issues
+
+如果按上面方法还无法解决，请到 [GitHub Issues](https://github.com/Seven-TMP/ets2-chat-translator/issues) 提交问题，并尽量带上这些信息：
+
+* 游戏类型：ETS2 或 ATS
+* 插件版本：例如 `v0.3.6`
+* 使用的翻译平台：例如 DeepSeek、MiMo、百度、腾讯云等
+* 问题现象：不显示、翻译失败、延迟很高、401、429 等
+* 复现步骤：进入游戏后做了什么、出现问题的大概时间
+* 日志片段：从 `game.log.txt` 中复制相关的 `[ChatTranslator]`、`[Translate]`、`[TranslateHTTP]` 行
+
+> 提交前请先隐藏 API Key、Secret、Token 等敏感内容。
+
+### 4. 常见 HTTP 错误
 
 | 错误代码 / 提示 | 可能原因 | 推荐解决方法 |
 | :--- | :--- | :--- |
 | **HTTP 400** | 模型名称不受支持 | 检查配置中 `model` 字段拼写及大小写是否符合平台规范。 |
 | **HTTP 401** | API Key 无效 | 检查 Key 是否复制完整，或是否该 Key 属于当前选择的服务商。 |
 | **HTTP 403** | 鉴权失败或服务未开通 | 确认您的账户是否有欠费，或对应的翻译 API 服务是否已在后台启用。 |
-| **HTTP 429** | 触发频率限制或额度耗尽 | 降低并发 `workers` 数量，或在管理器中切换至备用 API 节点。 |
+| **HTTP 429** | 触发频率限制或额度耗尽 | 降低 `workers`，或切换到额度更高的 API / 备用 Provider。 |
 | **INVALID_TO_PARAM** | 目标语言参数不支持 | 百度翻译特有错误，请确保您的目标语言设置为 `zh-CN`，插件会自动转译。 |
 | **cannot parse response** | 返回的 JSON 格式无法解析 | 接口可能返回了错误页面（如 HTML 报错网关），请检查 base_url。 |
 | **returned original...** | 接口直接返回了原文 | 翻译平台认为源语言和目标语言一致，或翻译接口判定无需翻译。 |
@@ -313,6 +332,13 @@ build/
 ---
 
 ## 🧾 历史版本更新
+
+### 🚀 v0.3.7
+* **⚡ 翻译并发优化**：优化 Provider 请求调度，减少高峰聊天时的串行等待。
+* **🚦 智能节流退避**：正常请求允许更高并发，遇到 `429` 或频率限制后再自动降速。
+* **🧵 高峰队列优化**：队列积压时减少单 Provider 额外重试，避免旧请求长期占住 Worker。
+* **🔐 密钥加密保存**：管理器保存配置和预设时会加密 `api_key` / `api_secret`，插件读取时自动解密使用。
+* **🧾 排错文档优化**：日志与排错章节新增 Issues 提交流程和日志片段要求。
 
 ### 🚀 v0.3.6
 * **🎨 管理器 UI 焕新**：调整整体视觉风格、顶部标题、配置预览区和按钮状态，界面更紧凑清晰。

@@ -8,5 +8,8 @@ contextBridge.exposeInMainWorld('managerApi', {
   uninstallDll: (game, gamePath) => ipcRenderer.invoke('uninstall-dll', game, gamePath),
   readConfig: (game, gamePath) => ipcRenderer.invoke('read-config', game, gamePath),
   writeConfig: (game, gamePath, jsonText) => ipcRenderer.invoke('write-config', game, gamePath, jsonText),
-  testConfig: (jsonText) => ipcRenderer.invoke('test-config', jsonText)
+  testConfig: (jsonText) => ipcRenderer.invoke('test-config', jsonText),
+  listPresets: () => ipcRenderer.invoke('list-presets'),
+  savePreset: (name, jsonText) => ipcRenderer.invoke('save-preset', name, jsonText),
+  deletePreset: (name) => ipcRenderer.invoke('delete-preset', name)
 });

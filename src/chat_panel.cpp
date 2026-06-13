@@ -28,6 +28,12 @@ const COLORREF cBlue = RGB(59, 130, 246);
 const COLORREF cCyan = RGB(34, 211, 238);
 constexpr int kTimeColumnW = 68;
 
+BYTE OverlayAlpha(int opacity)
+{
+    int clamped = (std::max)(35, (std::min)(100, opacity));
+    return (BYTE)((clamped * 255 + 50) / 100);
+}
+
 void Fill(HDC dc, RECT r, COLORREF color)
 {
     HBRUSH b = CreateSolidBrush(color);
@@ -246,7 +252,7 @@ bool ChatPanel::Open(HINSTANCE instance, const RuntimeConfig& runtime)
         x, y, w, h, nullptr, nullptr, instance_, this);
     if (!hwnd_) return false;
 
-    SetLayeredWindowAttributes(hwnd_, 0, 250, LWA_ALPHA);
+    SetLayeredWindowAttributes(hwnd_, 0, OverlayAlpha(runtime.overlayOpacity), LWA_ALPHA);
     SetOverlayHotkey(runtime.overlayHotkey);
 
     ShowWindow(hwnd_, SW_SHOW);
@@ -288,6 +294,7 @@ void ChatPanel::ApplyRuntime(const RuntimeConfig& runtime)
     SetOverlayHotkey(runtime.overlayHotkey);
 
     if (hwnd_) {
+        SetLayeredWindowAttributes(hwnd_, 0, OverlayAlpha(runtime.overlayOpacity), LWA_ALPHA);
         if (searchBox_) {
             SendMessageW(searchBox_, WM_SETFONT, (WPARAM)smallFont_, TRUE);
             RECT rc{};

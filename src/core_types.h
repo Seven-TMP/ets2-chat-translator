@@ -22,6 +22,7 @@ struct RuntimeConfig
     size_t cacheLimit = 1500;
     int timeoutMs = 5000;
     int fontSize = 18;
+    int overlayOpacity = 98;
 };
 
 struct ProviderSettings

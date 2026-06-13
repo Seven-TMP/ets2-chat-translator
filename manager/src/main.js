@@ -6,6 +6,7 @@ const crypto = require('crypto');
 
 const DLL_NAME = 'ets2_chat_translator.dll';
 const CONFIG_NAME = 'ets2_chat_translator_config.json';
+const PRESETS_NAME = 'config_presets.json';
 
 function iconPath() {
   const packaged = path.join(process.resourcesPath || '', 'logo.ico');
@@ -107,6 +108,55 @@ function installedDllPath(ets2Path) {
 
 function configPath(ets2Path) {
   return path.join(pluginDir(ets2Path), CONFIG_NAME);
+}
+
+function presetsPath() {
+  return path.join(app.getPath('userData'), PRESETS_NAME);
+}
+
+function readPresets() {
+  const file = presetsPath();
+  if (!fs.existsSync(file)) return [];
+  try {
+    const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+    return Array.isArray(parsed.presets) ? parsed.presets.filter((item) => item && item.name && item.config) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writePresets(presets) {
+  const file = presetsPath();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, JSON.stringify({ presets }, null, 2), 'utf8');
+  return presets;
+}
+
+function normalizePresetName(name) {
+  return String(name || '').replace(/\s+/g, ' ').trim().slice(0, 48);
+}
+
+function savePreset(name, jsonText) {
+  const cleanName = normalizePresetName(name);
+  if (!cleanName) throw new Error('预设名称不能为空');
+  const config = JSON.parse(jsonText);
+  const presets = readPresets();
+  const next = {
+    name: cleanName,
+    updated_at: new Date().toISOString(),
+    config
+  };
+  const index = presets.findIndex((item) => item.name.toLowerCase() === cleanName.toLowerCase());
+  if (index >= 0) presets[index] = next;
+  else presets.push(next);
+  presets.sort((a, b) => a.name.localeCompare(b.name, 'zh-CN'));
+  return writePresets(presets);
+}
+
+function deletePreset(name) {
+  const cleanName = normalizePresetName(name);
+  if (!cleanName) return readPresets();
+  return writePresets(readPresets().filter((item) => item.name.toLowerCase() !== cleanName.toLowerCase()));
 }
 
 function compactText(value, max = 260) {
@@ -870,3 +920,6 @@ ipcMain.handle('write-config', (_event, game, ets2Path, jsonText) => {
 });
 
 ipcMain.handle('test-config', (_event, jsonText) => testConfigText(jsonText));
+ipcMain.handle('list-presets', () => readPresets());
+ipcMain.handle('save-preset', (_event, name, jsonText) => savePreset(name, jsonText));
+ipcMain.handle('delete-preset', (_event, name) => deletePreset(name));

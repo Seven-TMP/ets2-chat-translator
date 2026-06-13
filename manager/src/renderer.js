@@ -8,9 +8,16 @@ const els = {
   installBtn: document.querySelector('#installBtn'),
   uninstallBtn: document.querySelector('#uninstallBtn'),
   gamePathLabel: document.querySelector('#gamePathLabel'),
+  configPreset: document.querySelector('#configPreset'),
+  presetName: document.querySelector('#presetName'),
+  applyPresetBtn: document.querySelector('#applyPresetBtn'),
+  savePresetBtn: document.querySelector('#savePresetBtn'),
+  deletePresetBtn: document.querySelector('#deletePresetBtn'),
   preset: document.querySelector('#preset'),
   targetLang: document.querySelector('#targetLang'),
   overlayHotkey: document.querySelector('#overlayHotkey'),
+  overlayOpacity: document.querySelector('#overlayOpacity'),
+  overlayOpacityValue: document.querySelector('#overlayOpacityValue'),
   workers: document.querySelector('#workers'),
   queueLimit: document.querySelector('#queueLimit'),
   cacheLimit: document.querySelector('#cacheLimit'),
@@ -37,6 +44,7 @@ const els = {
 };
 
 let currentGame = 'ets2';
+let configPresets = [];
 const GAME_LABELS = {
   ets2: 'ETS2',
   ats: 'ATS'
@@ -175,6 +183,7 @@ function baseConfig() {
     cache_limit: Math.max(100, numberValue(els.cacheLimit, 1500)),
     timeout_ms: Math.max(1500, Math.min(6000, numberValue(els.timeoutMs, 5000))),
     font_size: Math.max(12, Math.min(28, numberValue(els.fontSize, 18))),
+    overlay_opacity: Math.max(35, Math.min(100, numberValue(els.overlayOpacity, 98))),
     providers: []
   };
 }
@@ -240,7 +249,67 @@ function renderTestResult(result) {
   `;
 }
 
-function updatePreview() {
+function primaryPresetValue(provider) {
+  if (!provider) return 'free';
+  const kind = provider.kind || '';
+  if (kind === 'anthropic') return 'anthropic';
+  if (kind === 'openai_compatible' || kind === 'openai') return 'openai';
+  if (kind === 'deepl') return 'deepl';
+  if (kind === 'google_cloud' || kind === 'google_translate') return 'google-cloud';
+  if (kind === 'microsoft' || kind === 'azure_translator') return 'microsoft';
+  if (kind === 'baidu') return 'baidu';
+  if (kind === 'youdao') return 'youdao';
+  if (kind === 'tencent' || kind === 'tencent_cloud' || kind === 'tencent_tmt') return 'tencent';
+  if (kind === 'aliyun' || kind === 'alibaba' || kind === 'alibaba_cloud' || kind === 'alimt') return 'aliyun';
+  if (kind === 'volcengine' || kind === 'volc' || kind === 'volc_translate' || kind === 'huoshan') return 'volcengine';
+  if (kind === 'libretranslate') return 'libretranslate';
+  return 'openai';
+}
+
+function applyConfigObject(config, statusText = '') {
+  els.targetLang.value = config.target_lang || 'zh-CN';
+  els.overlayHotkey.value = config.overlay_hotkey || 'Ctrl+Shift+T';
+  els.workers.value = config.workers ?? 8;
+  els.queueLimit.value = config.queue_limit ?? 1000;
+  els.cacheLimit.value = config.cache_limit ?? 1500;
+  els.timeoutMs.value = config.timeout_ms ?? 5000;
+  els.fontSize.value = config.font_size ?? 18;
+  setFontSize(config.font_size ?? 18);
+  setOverlayOpacity(config.overlay_opacity ?? 98);
+  const primary = (config.providers || []).find((provider) => provider.enabled && !['mymemory', 'andeer'].includes(provider.kind));
+  if (primary) {
+    els.preset.value = primaryPresetValue(primary);
+    const selected = PROVIDER_PRESETS[els.preset.value] || PROVIDER_PRESETS.openai;
+    els.providerLabel.value = primary.label || selected.label;
+    els.baseUrl.value = primary.base_url || selected.baseUrl;
+    els.apiKey.value = primary.api_key || '';
+    els.apiSecret.value = primary.api_secret || '';
+    els.model.value = primary.model || selected.model;
+    els.sourceLang.value = primary.source || primary.source_lang || 'auto';
+  } else {
+    els.preset.value = 'free';
+  }
+  els.enableFallbacks.checked = (config.providers || []).some((provider) => ['mymemory', 'andeer'].includes(provider.kind));
+  els.preview.value = JSON.stringify(config, null, 2);
+  syncProviderUi();
+  if (statusText) setStatus(statusText);
+}
+
+function renderPresetList(selectedName = '') {
+  const options = ['<option value="">选择预设...</option>'];
+  for (const preset of configPresets) {
+    const selected = preset.name === selectedName ? ' selected' : '';
+    options.push(`<option value="${escapeHtml(preset.name)}"${selected}>${escapeHtml(preset.name)}</option>`);
+  }
+  els.configPreset.innerHTML = options.join('');
+}
+
+async function refreshPresets(selectedName = '') {
+  configPresets = await window.managerApi.listPresets();
+  renderPresetList(selectedName);
+}
+
+function syncProviderUi() {
   const selected = PROVIDER_PRESETS[els.preset.value] || PROVIDER_PRESETS.free;
   els.llmFields.style.display = selected.kind ? 'grid' : 'none';
   els.model.closest('.form-group').style.display = selected.needsModel ? 'flex' : 'none';
@@ -248,6 +317,10 @@ function updatePreview() {
   els.apiSecret.placeholder = selected.secretLabel || '签名平台需要';
   els.model.closest('.form-group').querySelector('label').textContent = selected.modelLabel || '模型';
   els.apiKey.placeholder = selected.needsApiKey ? '必填' : '可选';
+}
+
+function updatePreview() {
+  syncProviderUi();
   els.preview.value = JSON.stringify(buildConfig(), null, 2);
 }
 
@@ -277,44 +350,7 @@ async function loadInstalledConfig(silent = false) {
       if (!silent) setStatus('插件目录里还没有配置文件');
       return;
     }
-    const config = JSON.parse(text);
-    els.targetLang.value = config.target_lang || 'zh-CN';
-    els.overlayHotkey.value = config.overlay_hotkey || 'Ctrl+Shift+T';
-    els.workers.value = config.workers ?? 8;
-    els.queueLimit.value = config.queue_limit ?? 1000;
-    els.cacheLimit.value = config.cache_limit ?? 1500;
-    els.timeoutMs.value = config.timeout_ms ?? 5000;
-    els.fontSize.value = config.font_size ?? 18;
-    setFontSize(config.font_size ?? 18);
-    const primary = (config.providers || []).find((provider) => provider.enabled && !['mymemory', 'andeer'].includes(provider.kind));
-    if (primary) {
-      const kind = primary.kind || '';
-      const baseUrl = primary.base_url || '';
-      if (kind === 'anthropic') els.preset.value = 'anthropic';
-      else if (kind === 'openai_compatible' || kind === 'openai') els.preset.value = 'openai';
-      else if (kind === 'deepl') els.preset.value = 'deepl';
-      else if (kind === 'google_cloud' || kind === 'google_translate') els.preset.value = 'google-cloud';
-      else if (kind === 'microsoft' || kind === 'azure_translator') els.preset.value = 'microsoft';
-      else if (kind === 'baidu') els.preset.value = 'baidu';
-      else if (kind === 'youdao') els.preset.value = 'youdao';
-      else if (kind === 'tencent' || kind === 'tencent_cloud' || kind === 'tencent_tmt') els.preset.value = 'tencent';
-      else if (kind === 'aliyun' || kind === 'alibaba' || kind === 'alibaba_cloud' || kind === 'alimt') els.preset.value = 'aliyun';
-      else if (kind === 'volcengine' || kind === 'volc' || kind === 'volc_translate' || kind === 'huoshan') els.preset.value = 'volcengine';
-      else if (kind === 'libretranslate') els.preset.value = 'libretranslate';
-      else els.preset.value = 'openai';
-      els.providerLabel.value = primary.label || (PROVIDER_PRESETS[els.preset.value] || PROVIDER_PRESETS.openai).label;
-      els.baseUrl.value = primary.base_url || (PROVIDER_PRESETS[els.preset.value] || PROVIDER_PRESETS.openai).baseUrl;
-      els.apiKey.value = primary.api_key || '';
-      els.apiSecret.value = primary.api_secret || '';
-      els.model.value = primary.model || (PROVIDER_PRESETS[els.preset.value] || PROVIDER_PRESETS.openai).model;
-      els.sourceLang.value = primary.source || primary.source_lang || 'auto';
-    } else {
-      els.preset.value = 'free';
-    }
-    els.enableFallbacks.checked = (config.providers || []).some((provider) => ['mymemory', 'andeer'].includes(provider.kind));
-    els.preview.value = JSON.stringify(config, null, 2);
-    updatePreview();
-    setStatus('已读取已安装配置');
+    applyConfigObject(JSON.parse(text), '已读取已安装配置');
   } catch (error) {
     setStatus(`读取配置失败：${error.message}`);
   }
@@ -359,6 +395,54 @@ els.uninstallBtn.addEventListener('click', async () => {
 els.loadConfigBtn.addEventListener('click', () => loadInstalledConfig(false));
 els.previewBtn.addEventListener('click', updatePreview);
 
+els.configPreset.addEventListener('change', () => {
+  els.presetName.value = els.configPreset.value;
+});
+
+els.applyPresetBtn.addEventListener('click', () => {
+  const preset = configPresets.find((item) => item.name === els.configPreset.value);
+  if (!preset) {
+    setStatus('请选择要应用的配置预设');
+    return;
+  }
+  applyConfigObject(preset.config, `已应用预设：${preset.name}`);
+  els.presetName.value = preset.name;
+});
+
+els.savePresetBtn.addEventListener('click', async () => {
+  try {
+    const jsonText = els.preview.value;
+    JSON.parse(jsonText);
+    const name = els.presetName.value.trim() || els.configPreset.value.trim();
+    if (!name) {
+      setStatus('请先填写预设名称');
+      return;
+    }
+    await window.managerApi.savePreset(name, jsonText);
+    await refreshPresets(name);
+    els.presetName.value = name;
+    setStatus(`已保存配置预设：${name}`);
+  } catch (error) {
+    setStatus(`保存预设失败：${error.message}`);
+  }
+});
+
+els.deletePresetBtn.addEventListener('click', async () => {
+  try {
+    const name = els.configPreset.value || els.presetName.value.trim();
+    if (!name) {
+      setStatus('请选择要删除的配置预设');
+      return;
+    }
+    await window.managerApi.deletePreset(name);
+    await refreshPresets();
+    if (els.presetName.value === name) els.presetName.value = '';
+    setStatus(`已删除配置预设：${name}`);
+  } catch (error) {
+    setStatus(`删除预设失败：${error.message}`);
+  }
+});
+
 els.testConfigBtn.addEventListener('click', async () => {
   try {
     updatePreview();
@@ -398,6 +482,7 @@ for (const input of [
   els.cacheLimit,
   els.timeoutMs,
   els.fontSize,
+  els.overlayOpacity,
   els.providerLabel,
   els.baseUrl,
   els.apiKey,
@@ -441,12 +526,23 @@ function setFontSize(size) {
   updatePreview();
 }
 
+function setOverlayOpacity(value) {
+  const opacity = Math.max(35, Math.min(100, Number.parseInt(value, 10) || 98));
+  els.overlayOpacity.value = opacity;
+  els.overlayOpacityValue.textContent = opacity;
+  updatePreview();
+}
+
 els.fontSizeMinus.addEventListener('click', () => {
   setFontSize(numberValue(els.fontSize, 18) - 2);
 });
 
 els.fontSizePlus.addEventListener('click', () => {
   setFontSize(numberValue(els.fontSize, 18) + 2);
+});
+
+els.overlayOpacity.addEventListener('input', () => {
+  setOverlayOpacity(els.overlayOpacity.value);
 });
 
 document.querySelectorAll('.preset-btn').forEach(btn => {
@@ -457,7 +553,9 @@ document.querySelectorAll('.preset-btn').forEach(btn => {
 
 (async function init() {
   els.ets2Path.value = await window.managerApi.detectPath(currentGame);
+  await refreshPresets();
   setFontSize(numberValue(els.fontSize, 18));
+  setOverlayOpacity(numberValue(els.overlayOpacity, 98));
   applyPresetDefaults(true);
   await refreshState();
   await loadInstalledConfig(true);

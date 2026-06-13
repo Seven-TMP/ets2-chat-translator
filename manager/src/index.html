@@ -69,6 +69,26 @@
             <span class="sub-text">Provider 按配置顺序回退</span>
           </div>
 
+          <div class="preset-toolbar">
+            <div class="form-group">
+              <label>配置预设</label>
+              <div class="select-wrapper">
+                <select id="configPreset">
+                  <option value="">选择预设...</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>预设名称</label>
+              <input id="presetName" spellcheck="false" placeholder="例如：DeepSeek / 百度 / 免费兜底" />
+            </div>
+            <div class="preset-actions">
+              <button id="applyPresetBtn" class="secondary-btn" type="button">应用</button>
+              <button id="savePresetBtn" class="secondary-btn" type="button">保存为预设</button>
+              <button id="deletePresetBtn" class="danger-btn" type="button">删除</button>
+            </div>
+          </div>
+
           <div class="form-grid basic-grid">
             <div class="form-group">
               <label>主翻译平台</label>
@@ -139,6 +159,14 @@
               <div class="font-preview" id="fontPreview">
                 <div>中文：TruckersMP 翻译</div>
                 <div>English: truckersmp chat preview</div>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label>悬浮窗透明度</label>
+              <div class="range-control">
+                <input id="overlayOpacity" type="range" min="35" max="100" value="98" />
+                <div class="range-value"><span id="overlayOpacityValue">98</span>%</div>
               </div>
             </div>
 

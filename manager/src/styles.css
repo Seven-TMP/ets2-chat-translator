@@ -304,6 +304,30 @@ h2 {
   gap: 16px;
 }
 
+.preset-toolbar {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.8fr) minmax(220px, 1fr) auto;
+  gap: 12px;
+  align-items: end;
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: rgba(10, 15, 25, 0.36);
+}
+
+.preset-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  white-space: nowrap;
+}
+
+.preset-actions button {
+  height: 42px;
+  padding: 0 14px;
+}
+
 .basic-grid {
   grid-template-columns: repeat(2, minmax(180px, 1fr));
 }
@@ -666,6 +690,7 @@ textarea:focus {
     margin: 18px auto;
   }
   .install-layout,
+  .preset-toolbar,
   .basic-grid,
   .tuning-grid,
   .llm-fields {
@@ -687,6 +712,10 @@ textarea:focus {
   }
   .install-panel .main-actions {
     justify-content: flex-start;
+  }
+  .preset-actions {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 }
 
@@ -812,4 +841,31 @@ textarea:focus {
 .font-preview div + div {
   margin-top: 4px;
   color: var(--text-muted);
+}
+
+.range-control {
+  min-height: 42px;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) 58px;
+  gap: 12px;
+  align-items: center;
+  padding: 0 12px;
+  border: 1px solid var(--input-border);
+  border-radius: 8px;
+  background: var(--input-bg);
+}
+
+.range-control input[type="range"] {
+  height: 24px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  accent-color: var(--accent);
+}
+
+.range-value {
+  min-width: 48px;
+  color: var(--text-main);
+  font-weight: 600;
+  text-align: right;
 }

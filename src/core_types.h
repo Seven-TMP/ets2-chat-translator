@@ -22,7 +22,7 @@ struct RuntimeConfig
     int workerCount = 8;
     size_t queueLimit = 1000;
     size_t cacheLimit = 1500;
-    int timeoutMs = 5000;
+    int timeoutMs = 10000;
     int fontSize = 18;
     int overlayOpacity = 98;
 };

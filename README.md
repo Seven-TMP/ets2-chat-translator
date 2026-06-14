@@ -103,7 +103,7 @@ graph TD
 ```
 
 1. **下载并运行安装包**：
-   双击运行 `build\installer\ETS2-Chat-Translator-Manager-Setup-0.3.12.exe` 进行安装。
+   双击运行 `build\installer\ETS2-Chat-Translator-Manager-Setup-0.3.13.exe` 进行安装。
 2. **打开管理器**：启动安装好的 `ETS2 Chat Translator Manager`。
 3. **识别游戏目录**：选择对应的游戏（ETS2 或 ATS），管理器会尝试自动定位。若未找到，可手动选择游戏主程序所在的 bin 目录。
 4. **一键部署 DLL**：点击 `安装 / 更新 DLL` 按钮。
@@ -137,7 +137,7 @@ graph TD
 * **OpenAI 官方**: 访问 [OpenAI Platform](https://platform.openai.com/api-keys) 获取。
 * **硅基流动 (SiliconFlow)**: 提供超多开源大模型的高速中转。访问 [硅基流动官网](https://cloud.siliconflow.cn/account/ak) 注册，Base URL 填 `https://api.siliconflow.cn/v1` .
 * **小米 MiMo 开放平台（强力推荐）**: 我在用 MiMo 开放平台，体验小米顶尖模型 MiMo V2.5 等。通过我的邀请码注册：双方各得 ¥10 API 体验金 + 首单 9 折。邀请码：`TM9LQB`。注册：[https://platform.xiaomimimo.com?ref=TM9LQB](https://platform.xiaomimimo.com?ref=TM9LQB)（注册后自动填入 · 体验金 40 天有效）。Base URL 填 `https://api.xiaomimimo.com/v1`。
-* **本地化部署 (Ollama / LM Studio)**: 本地离线翻译。Ollama 的 Base URL 通常为 `http://localhost:11434/v1`，API Key 可留空或填任意字符。
+* **本地化部署 (Ollama / LM Studio)**: 本地或远端离线翻译。Ollama 的 OpenAI 兼容 Base URL 通常为 `http://localhost:11434/v1`；如果 Ollama 装在别的电脑，请填写 `http://远端IP:11434/v1`，不要填 `localhost`，也不要填 `/api`。API Key 可留空或填任意字符。27B 这类本地大模型建议 `workers=1`、`timeout_ms=30000`，避免并发排队导致忽快忽慢。
 
 **配置模板 (`kind: "openai_compatible"`)：**
 
@@ -247,7 +247,7 @@ graph TD
 | `workers` | Integer | `8` | 异步请求的并发 Worker 数量（推荐范围：`2` - `16`） |
 | `queue_limit` | Integer | `1000` | 等待队列的最大消息缓存数，超出后将丢弃最旧的消息 |
 | `cache_limit` | Integer | `1500` | 翻译结果在内存中的最大缓存数量，相同文本不重复请求 API |
-| `timeout_ms` | Integer | `5000` | HTTP 请求超时时间（毫秒，系统会限制在 `1500` - `6000` 之间） |
+| `timeout_ms` | Integer | `10000` | HTTP 请求超时时间（毫秒，系统会限制在 `1500` - `30000` 之间；远端 Ollama / 27B 模型建议 `30000`） |
 | `font_size` | Integer | `18` | 游戏内悬浮窗的字体大小 (px) |
 | `overlay_opacity` | Integer | `98` | 悬浮窗背景透明度，范围 `0` - `100`，设为 `0` 时背景全透明 |
 | `providers` | Array | `[...]` | 翻译提供商列表。**系统会按数组顺序尝试，首位失败自动降级至下一位** |
@@ -281,7 +281,7 @@ build/
 ├── ets2_chat_translator_app/                       # 绿色版管理器 (绿色免安装)
 │   └── ETS2 Chat Translator Manager.exe
 └── installer/
-    └── ETS2-Chat-Translator-Manager-Setup-0.3.12.exe # 独立安装包 (集成 NSIS)
+    └── ETS2-Chat-Translator-Manager-Setup-0.3.13.exe # 独立安装包 (集成 NSIS)
 ```
 
 ---
@@ -335,6 +335,13 @@ build/
 ---
 
 ## 🧾 历史版本更新
+
+### 🚀 v0.3.13
+* **🦙 Ollama 远端适配**：管理器新增 Ollama 本地/远端预设，自动把 `:11434/api` 修正为 OpenAI 兼容的 `:11434/v1`。
+* **⏱️ 本地大模型超时放宽**：管理器和插件请求超时上限从 6 秒放宽到 30 秒，适配 `translategemma:27b` 这类首次加载和生成较慢的模型。
+* **🚦 Ollama 并发保护**：识别 Ollama / `:11434` / `translategemma` 后主 Provider 限制单并发，减少远端 27B 被多请求压到排队超时。
+* **🧩 日志高频短句修复**：补充 `sa`、`var`、`gel`、`f7 at`、`Кидай дс`、`Кину запись`、`Поворотник включать надо` 等本地兜底，减少 MyMemory 误翻。
+* **🧹 无意义单词过滤**：单个明显用户名或无意义文本不再提交翻译接口，降低慢请求和失败噪音。
 
 ### 🚀 v0.3.12
 * **🧠 MiMo 翻译修复**：OpenAI 兼容协议下识别小米 MiMo，自动禁用 thinking，并使用 MiMo 兼容的输出 token 参数，避免 `HTTP 200` 但 `content` 为空后降级。

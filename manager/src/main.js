@@ -625,8 +625,20 @@ function redactSecrets(text, provider) {
 
 function joinProviderUrl(baseUrl, fallback, pathWithQuery) {
   const u = new URL(baseUrl || fallback);
+  if (isLikelyOllamaUrl(u)) normalizeOllamaOpenAIBaseUrl(u);
   const prefix = u.pathname.replace(/\/+$/, '');
   return `${u.protocol}//${u.host}${prefix}${pathWithQuery}`;
+}
+
+function isLikelyOllamaUrl(url) {
+  return url.port === '11434' || url.hostname === 'ollama' || url.hostname.includes('ollama');
+}
+
+function normalizeOllamaOpenAIBaseUrl(url) {
+  const pathName = url.pathname.replace(/\/+$/, '');
+  if (!pathName || pathName === '/' || pathName === '/api' || pathName.startsWith('/api/')) {
+    url.pathname = '/v1';
+  }
 }
 
 function jsonString(body, keys) {
@@ -682,7 +694,7 @@ function requestText(method, urlText, headers = {}, body = '', timeoutMs = 5000)
         ...headers,
         ...(data ? { 'Content-Length': data.length } : {})
       },
-      timeout: Math.max(1500, Math.min(6000, timeoutMs || 5000))
+      timeout: Math.max(1500, Math.min(30000, timeoutMs || 5000))
     }, (res) => {
       let responseBody = '';
       res.setEncoding('utf8');
@@ -1166,7 +1178,7 @@ async function testConfigText(jsonText) {
   const providers = (config.providers || []).filter((provider) => provider && provider.enabled && provider.kind);
   const runtime = {
     target: config.target_lang || 'zh-CN',
-    timeoutMs: Math.max(1500, Math.min(6000, config.timeout_ms || 5000)),
+    timeoutMs: Math.max(1500, Math.min(30000, config.timeout_ms || 5000)),
     sampleText: 'hello'
   };
   if (!providers.length) {

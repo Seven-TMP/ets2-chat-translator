@@ -94,6 +94,16 @@ const PROVIDER_PRESETS = {
     needsModel: true,
     needsApiKey: true
   },
+  'ollama': {
+    kind: 'openai_compatible',
+    label: 'Ollama',
+    baseUrl: 'http://localhost:11434/v1',
+    model: 'translategemma:27b',
+    needsModel: true,
+    needsApiKey: false,
+    defaultWorkers: 1,
+    defaultTimeoutMs: 30000
+  },
   'deepseek': {
     kind: 'deepseek',
     label: 'DeepSeek',
@@ -211,7 +221,7 @@ function baseConfig() {
     workers: Math.max(1, Math.min(32, numberValue(els.workers, 8))),
     queue_limit: Math.max(50, numberValue(els.queueLimit, 1000)),
     cache_limit: Math.max(100, numberValue(els.cacheLimit, 1500)),
-    timeout_ms: Math.max(1500, Math.min(6000, numberValue(els.timeoutMs, 5000))),
+    timeout_ms: Math.max(1500, Math.min(30000, numberValue(els.timeoutMs, 5000))),
     font_size: Math.max(12, Math.min(28, numberValue(els.fontSize, 18))),
     overlay_opacity: Math.max(0, Math.min(100, numberValue(els.overlayOpacity, 98))),
     providers: []
@@ -227,7 +237,7 @@ function buildConfig() {
       kind: selected.kind,
       label: els.providerLabel.value.trim() || selected.label,
       enabled: true,
-      base_url: els.baseUrl.value.trim(),
+      base_url: normalizeOpenAIBaseUrl(els.baseUrl.value.trim(), selected),
       api_key: els.apiKey.value,
       api_secret: els.apiSecret.value,
       model: selected.needsModel ? (els.model.value.trim() || selected.model) : '',
@@ -252,6 +262,24 @@ function escapeHtml(value) {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+}
+
+function normalizeOpenAIBaseUrl(value, selected = {}) {
+  const raw = String(value || '').trim();
+  if (!raw) return raw;
+  const probe = `${selected.label || ''} ${selected.kind || ''} ${selected.model || ''} ${raw}`.toLowerCase();
+  const likelyOllama = probe.includes('ollama') || probe.includes('translategemma') || /(^|[/:])11434(\/|$)/.test(raw);
+  if (!likelyOllama) return raw;
+
+  try {
+    const url = new URL(raw);
+    const path = url.pathname.replace(/\/+$/, '');
+    if (!path || path === '/') url.pathname = '/v1';
+    else if (path === '/api' || path.startsWith('/api/')) url.pathname = '/v1';
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return raw;
+  }
 }
 
 function renderTestResult(result) {
@@ -443,6 +471,8 @@ function primaryPresetValue(provider) {
   const kind = provider.kind || '';
   if (kind === 'anthropic') return 'anthropic';
   if (kind === 'deepseek' || kind === 'deepseek_chat' || kind === 'deepseek_compatible') return 'deepseek';
+  const probe = `${provider.label || ''} ${provider.base_url || ''} ${provider.model || ''}`.toLowerCase();
+  if (kind === 'openai_compatible' && (probe.includes('ollama') || probe.includes('translategemma') || probe.includes(':11434'))) return 'ollama';
   if (kind === 'openai_compatible' || kind === 'openai') return 'openai';
   if (kind === 'deepl') return 'deepl';
   if (kind === 'google_cloud' || kind === 'google_translate') return 'google-cloud';
@@ -523,6 +553,8 @@ function applyPresetDefaults(force = false) {
   if (force || !els.providerLabel.value.trim()) els.providerLabel.value = selected.label;
   if (force || !els.baseUrl.value.trim()) els.baseUrl.value = selected.baseUrl;
   if (force || !els.model.value.trim()) els.model.value = selected.model;
+  if (force && selected.defaultWorkers) els.workers.value = selected.defaultWorkers;
+  if (force && selected.defaultTimeoutMs) els.timeoutMs.value = selected.defaultTimeoutMs;
   if (!els.sourceLang.value.trim()) els.sourceLang.value = 'auto';
   updatePreview();
 }

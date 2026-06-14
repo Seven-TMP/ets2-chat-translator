@@ -280,6 +280,14 @@ const ChatTokenItem* ChatTokenItems(size_t& count)
         { L"neden", L"为什么", true },
         { L"hayir", L"不", true },
         { L"hayır", L"不", true },
+        { L"sa", L"你好", true },
+        { L"as", L"你好", true },
+        { L"gel", L"过来", true },
+        { L"var", L"有", true },
+        { L"varmi", L"有吗", true },
+        { L"varmı", L"有吗", true },
+        { L"dc", L"Discord", true },
+        { L"ds", L"Discord", true },
         { L"crash", L"撞车", true },
         { L"ram", L"撞人", true },
         { L"rammer", L"撞人玩家", true },
@@ -496,6 +504,26 @@ std::wstring ShortPhraseFallback(const std::wstring& input)
         { L"nice lag", L"卡得真漂亮" },
         { L"stop horn", L"别按喇叭" },
         { L"the player stop horn", L"那个玩家别按喇叭" },
+        { L"f7 at", L"按 F7" },
+        { L"dc varmi", L"有 Discord 吗" },
+        { L"dc varmı", L"有 Discord 吗" },
+        { L"сам виноват", L"是你自己的错" },
+        { L"охренел", L"疯了吗" },
+        { L"идиот", L"白痴" },
+        { L"кидай дс", L"发 Discord" },
+        { L"кину запись", L"我会发录像" },
+        { L"ребят кто по дс", L"谁用 Discord" },
+        { L"поворотник включать надо", L"该打转向灯" },
+        { L"ездить научись сам", L"你自己先学会开车" },
+        { L"и ты мне говоришь научится ездить", L"你还叫我学开车" },
+        { L"ты поворот делал вопще с обочины", L"你刚才是从路肩转弯的" },
+        { L"пф", L"哼" },
+        { L"умник смотрю", L"看来挺聪明啊" },
+        { L"onune kırma olm", L"别往我前面变道，兄弟" },
+        { L"önüne kırma olum", L"别往我前面变道，兄弟" },
+        { L"araba 100 oldu hasareı", L"车损到 100 了" },
+        { L"yol vre la", L"让路啊" },
+        { L"yol ver la", L"让路啊" },
         { L"rec ban", L"已录屏，等封禁" },
         { L"o/", L"挥手" },
         { L"o//", L"挥手" },
@@ -550,6 +578,16 @@ std::wstring ShortPhraseFallback(const std::wstring& input)
             prefix += translated;
         }
         if (prefixOk && !prefix.empty()) return prefix + L"，" + structured;
+    }
+
+    if (words.size() >= 2 && words.size() <= 4) {
+        std::wstring head = exactLookup(words[0]);
+        if (!head.empty()) {
+            std::wstring tail = JoinTailTokens(words, 1, words.size() - 1);
+            if (!tail.empty() && SplitWords(tail).size() == words.size() - 1) {
+                return head + L" " + tail;
+            }
+        }
     }
 
     if (lower.find(L"cannot connect to server") != std::wstring::npos ||
@@ -625,6 +663,21 @@ std::wstring ShortPhraseFallback(const std::wstring& input)
     }
 
     return L"";
+}
+
+bool LooksLikeSingleNameOrNoise(const std::wstring& input)
+{
+    std::wstring value = TrimChatEdgePunctuation(NormalizeChatForDictionary(input));
+    if (value.empty() || HasChinese(value)) return false;
+    for (wchar_t ch : value) {
+        if (iswspace(ch)) return false;
+    }
+
+    std::wstring translated;
+    bool pauseAfter = false;
+    if (ProviderLeftoverToken(value, translated, pauseAfter)) return false;
+
+    return IsIdOrNameToken(value);
 }
 
 std::wstring JsonStringAfter(const std::string& json, const std::string& marker, const std::string& key)
@@ -852,6 +905,28 @@ std::wstring TargetForDeepL(const std::wstring& target)
 std::wstring ProviderBaseUrl(const ProviderSettings& settings, const wchar_t* fallback)
 {
     return settings.baseUrl.empty() ? fallback : settings.baseUrl;
+}
+
+bool IsOllamaLikeProvider(const ProviderSettings& settings)
+{
+    std::wstring probe = LowerAscii(settings.kind + L" " + settings.label + L" " + settings.baseUrl + L" " + settings.model);
+    return probe.find(L"ollama") != std::wstring::npos
+        || probe.find(L"translategemma") != std::wstring::npos
+        || probe.find(L":11434") != std::wstring::npos;
+}
+
+void NormalizeOllamaOpenAIBaseUrl(std::wstring& baseUrl)
+{
+    std::wstring lower = LowerAscii(baseUrl);
+    size_t api = lower.find(L"/api");
+    if (api != std::wstring::npos && (api + 4 == lower.size() || lower[api + 4] == L'/')) {
+        baseUrl = baseUrl.substr(0, api) + L"/v1";
+        return;
+    }
+
+    while (!baseUrl.empty() && baseUrl.back() == L'/') baseUrl.pop_back();
+    lower = LowerAscii(baseUrl);
+    if (lower.find(L"/v1") == std::wstring::npos) baseUrl += L"/v1";
 }
 
 std::string HexHash(const std::string& data, ALG_ID alg)
@@ -1274,9 +1349,11 @@ public:
         bool tls = true;
         bool deepSeek = IsDeepSeek();
         bool miMo = IsMiMo();
+        bool ollama = IsOllama();
         std::wstring baseUrl = settings_.baseUrl;
         if (baseUrl.empty() && deepSeek) baseUrl = L"https://api.deepseek.com";
         if (baseUrl.empty() && miMo) baseUrl = L"https://api.xiaomimimo.com/v1";
+        if (ollama) NormalizeOllamaOpenAIBaseUrl(baseUrl);
         if (!SplitUrl(baseUrl, host, port, prefix, tls)) {
             error = L"bad base_url";
             return L"";
@@ -1354,6 +1431,11 @@ private:
         return probe.find(L"mimo") != std::wstring::npos
             || probe.find(L"xiaomi") != std::wstring::npos
             || probe.find(L"xiaomimimo") != std::wstring::npos;
+    }
+
+    bool IsOllama() const
+    {
+        return IsOllamaLikeProvider(settings_);
     }
 };
 
@@ -2023,6 +2105,11 @@ void TranslateEngine::Submit(unsigned int id, const std::wstring& value)
         return;
     }
 
+    if (LooksLikeSingleNameOrNoise(value)) {
+        LogLine(L"[Translate] \"" + value + L"\" -> skip: name/noise");
+        return;
+    }
+
     if (IsNonTranslatableChatText(value) || text::MostlyChinese(value)) {
         LogLine(L"[Translate] \"" + value + L"\" -> skip: non-translatable");
         return;
@@ -2090,6 +2177,12 @@ int ProviderMaxInFlight(const std::wstring& kind)
     if (lower == L"volcengine" || lower == L"volc" || lower == L"volc_translate" || lower == L"huoshan") return 6;
     if (lower == L"deepl" || lower == L"google_cloud" || lower == L"google_translate" || lower == L"microsoft" || lower == L"azure_translator") return 6;
     return 8;
+}
+
+int ProviderMaxInFlight(const TranslateProvider& provider)
+{
+    if (IsOllamaLikeProvider(provider.Settings())) return 1;
+    return ProviderMaxInFlight(provider.Kind());
 }
 
 bool RetryableProviderError(const std::wstring& error)
@@ -2165,6 +2258,11 @@ std::wstring TranslateEngine::RunProviders(const std::wstring& value, HttpAgent&
 
     if (IsNonTranslatableChatText(value) || text::MostlyChinese(value)) {
         LogLine(L"[Translate] \"" + value + L"\" -> 跳过(无需翻译)");
+        return L"";
+    }
+
+    if (LooksLikeSingleNameOrNoise(value)) {
+        LogLine(L"[Translate] \"" + value + L"\" -> 跳过(用户名/无意义文本)");
         return L"";
     }
 
@@ -2273,7 +2371,7 @@ TranslateEngine::ProviderSlot TranslateEngine::AcquireProviderSlot(size_t index)
     int intervalMs = 80;
     if (index < providers_.size()) intervalMs = ProviderIntervalMs(providers_[index]->Kind());
     int maxInFlight = 1;
-    if (index < providers_.size()) maxInFlight = ProviderMaxInFlight(providers_[index]->Kind());
+    if (index < providers_.size()) maxInFlight = ProviderMaxInFlight(*providers_[index]);
 
     while (running_) {
         auto now = std::chrono::steady_clock::now();

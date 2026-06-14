@@ -147,7 +147,7 @@ AppSettings Load(const std::wstring& path)
     s.runtime.workerCount = (std::max)(1, (std::min)(32, Jint(json, "workers", s.runtime.workerCount)));
     s.runtime.queueLimit = (size_t)(std::max)(50, Jint(json, "queue_limit", (int)s.runtime.queueLimit));
     s.runtime.cacheLimit = (size_t)(std::max)(100, Jint(json, "cache_limit", (int)s.runtime.cacheLimit));
-    s.runtime.timeoutMs = (std::max)(1500, (std::min)(6000, Jint(json, "timeout_ms", s.runtime.timeoutMs)));
+    s.runtime.timeoutMs = (std::max)(1500, (std::min)(30000, Jint(json, "timeout_ms", s.runtime.timeoutMs)));
     s.runtime.fontSize = (std::max)(12, (std::min)(28, Jint(json, "font_size", s.runtime.fontSize)));
     s.runtime.overlayOpacity = (std::max)(0, (std::min)(100, Jint(json, "overlay_opacity", s.runtime.overlayOpacity)));
 
@@ -183,7 +183,7 @@ R"({
   "workers": 8,
   "queue_limit": 1000,
   "cache_limit": 1500,
-  "timeout_ms": 5000,
+  "timeout_ms": 10000,
   "font_size": 18,
   "overlay_opacity": 98,
   "providers": [

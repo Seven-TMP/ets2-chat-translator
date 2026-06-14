@@ -1,10 +1,10 @@
 {
-  "version": "0.3.12",
-  "tag_name": "v0.3.12",
-  "name": "v0.3.12",
-  "download_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/download/v0.3.12/ETS2-Chat-Translator-Manager-Setup-0.3.12.exe",
-  "asset_name": "ETS2-Chat-Translator-Manager-Setup-0.3.12.exe",
-  "size": 82821560,
-  "html_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/tag/v0.3.12",
-  "notes": "### v0.3.12\n\n- 修复小米 MiMo 在 OpenAI 兼容协议下把输出额度消耗到 reasoning_content，导致 HTTP 200 但 content 为空的问题。\n- MiMo / DeepSeek 会自动禁用 thinking，MiMo 使用 max_completion_tokens，减少空响应和降级等待。\n- 修复 wtf 单词漏走本地字典的问题，避免 MyMemory 公共语料把 wtf 误翻成“我爱你很久了”。\n- 增强 sory、pardon、broooo、ahahah、0// 等游戏聊天短句和表情兜底。\n- 高响应失败的 Provider 会短暂冷却，减少高峰聊天时每条消息都先等待失败请求的延迟。"
+  "version": "0.3.13",
+  "tag_name": "v0.3.13",
+  "name": "v0.3.13",
+  "download_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/download/v0.3.13/ETS2-Chat-Translator-Manager-Setup-0.3.13.exe",
+  "asset_name": "ETS2-Chat-Translator-Manager-Setup-0.3.13.exe",
+  "size": 82823299,
+  "html_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/tag/v0.3.13",
+  "notes": "### v0.3.13\n\n- 管理器新增 Ollama 本地/远端预设，自动把 :11434/api 修正为 OpenAI 兼容的 :11434/v1。\n- 管理器和插件请求超时上限从 6 秒放宽到 30 秒，适配 translategemma:27b 这类首次加载和生成较慢的模型。\n- 识别 Ollama / :11434 / translategemma 后主 Provider 限制单并发，减少远端 27B 被多请求压到排队超时。\n- 补充 sa、var、gel、f7 at、Кидай дс、Кину запись、Поворотник включать надо 等本地兜底，减少 MyMemory 误翻。\n- 单个明显用户名或无意义文本不再提交翻译接口，降低慢请求和失败噪音。"
 }

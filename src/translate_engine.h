@@ -26,6 +26,7 @@ public:
     virtual std::wstring Translate(const std::wstring& input, const RuntimeConfig& runtime, HttpAgent& http, std::wstring& error) = 0;
     std::wstring Kind() const { return settings_.kind; }
     std::wstring Name() const { return settings_.label.empty() ? settings_.kind : settings_.label; }
+    const ProviderSettings& Settings() const { return settings_; }
     void SetLogger(Logger logger) { logger_ = std::move(logger); }
 
 protected:

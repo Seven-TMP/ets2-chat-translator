@@ -33,6 +33,7 @@ public:
     bool IsVisible() const { return hwnd_ && IsWindowVisible(hwnd_) != FALSE; }
     void SetComposeCallback(ComposeCallback cb) { composeCallback_ = std::move(cb); }
     void SetComposeStatus(const std::wstring& text);
+    void PostComposeStatus(std::wstring text);
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);

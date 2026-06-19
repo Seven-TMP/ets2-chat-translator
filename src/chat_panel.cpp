@@ -28,6 +28,7 @@ const COLORREF cWarn = RGB(239, 68, 68);
 const COLORREF cBlue = RGB(59, 130, 246);
 const COLORREF cCyan = RGB(34, 211, 238);
 constexpr int kTimeColumnW = 68;
+constexpr UINT kMsgComposeStatus = WM_APP + 5;
 
 BYTE BackgroundAlpha(int opacity)
 {
@@ -666,6 +667,14 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         self->SetOverlayHotkey(hotkey);
         return 0;
     }
+    case kMsgComposeStatus: {
+        auto text = reinterpret_cast<std::wstring*>(lp);
+        if (text) {
+            self->SetComposeStatus(*text);
+            delete text;
+        }
+        return 0;
+    }
     case WM_ERASEBKGND:
         return 1;
     case WM_CLOSE:
@@ -673,6 +682,7 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         DestroyWindow(hwnd);
         return 0;
     case WM_DESTROY:
+        self->StopComposeCaret();
         if (self->hotkeyRegistered_) {
             UnregisterHotKey(hwnd, self->hotkeyId_);
             self->hotkeyRegistered_ = false;
@@ -1266,6 +1276,16 @@ void ChatPanel::SetComposeStatus(const std::wstring& text)
         composeStatus_ = text;
     }
     if (hwnd_) RenderLayered();
+}
+
+void ChatPanel::PostComposeStatus(std::wstring text)
+{
+    HWND hwnd = hwnd_;
+    if (!hwnd) return;
+    auto payload = new std::wstring(std::move(text));
+    if (!PostMessageW(hwnd, kMsgComposeStatus, 0, reinterpret_cast<LPARAM>(payload))) {
+        delete payload;
+    }
 }
 
 void ChatPanel::SetComposeFocus(bool focused)

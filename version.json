@@ -1,11 +1,11 @@
 {
-  "version": "0.3.16",
-  "tag_name": "v0.3.16",
-  "name": "v0.3.16",
-  "download_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/download/v0.3.16/ETS2-Chat-Translator-Manager-Setup-0.3.16.exe",
-  "asset_name": "ETS2-Chat-Translator-Manager-Setup-0.3.16.exe",
-  "size": 82827277,
-  "sha256": "61D67EB9ACE86FE848A1EC2714EE6B55E7EAE15DFC550B78522DD0AA3F3A163D",
-  "html_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/tag/v0.3.16",
-  "notes": "### v0.3.16\n\n- goo 等 2-3 字母噪音不再误翻成问候，o//// 这类挥手/装饰符号会直接原样显示。\n- 模型漏掉 @玩家名 (临时编号) 时会自动补回，避免翻译后丢失被提及对象。\n- :)、:d、<3 不再把整句未翻译英文伪装成成功翻译。\n- enjoy your ban 这类普通句子不再被本地规则拆成半英文半中文。"
+  "version": "0.3.17",
+  "tag_name": "v0.3.17",
+  "name": "v0.3.17",
+  "download_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/download/v0.3.17/ETS2-Chat-Translator-Manager-Setup-0.3.17.exe",
+  "asset_name": "ETS2-Chat-Translator-Manager-Setup-0.3.17.exe",
+  "size": 0,
+  "sha256": "",
+  "html_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/tag/v0.3.17",
+  "notes": "### v0.3.17\n\n- 新增悬浮窗中文输入框，可将中文翻译为目标语言并粘贴到游戏聊天框。\n- 粘贴发送流程增加忙碌状态、剪贴板恢复和游戏窗口校验，降低误发风险。\n- 管理器底部新增作者信息。\n- 同步 README、DLL 日志版本和管理器版本。"
 }

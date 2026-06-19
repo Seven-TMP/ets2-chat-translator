@@ -36,6 +36,7 @@ void AppRuntime::Stop()
     if (translator_) translator_->Stop();
     if (panel_ && panel_->Window()) PostMessageW(panel_->Window(), WM_CLOSE, 0, 0);
 
+    if (composeThread_.joinable()) composeThread_.join();
     if (ui_.joinable()) ui_.join();
 }
 
@@ -105,6 +106,7 @@ bool AppRuntime::Boot()
 
 void AppRuntime::Teardown()
 {
+    if (composeThread_.joinable()) composeThread_.join();
     {
         std::lock_guard<std::mutex> g(translatorLock_);
         if (translator_) translator_->Stop();
@@ -233,46 +235,50 @@ void AppRuntime::LogValue(const std::wstring& prefix, const std::wstring& value)
     logger_(SCS_LOG_TYPE_message, msg.c_str());
 }
 
-static void SendKeysToGame(const std::wstring& text);
+static bool PasteTextToGameChat(const std::wstring& text);
 
 void AppRuntime::OnComposeSubmit(const std::wstring& text)
 {
     if (!alive_ || !panel_) return;
-    LogValue(L"[ChatTranslator] compose input: ", text);
+    if (composeBusy_.exchange(true)) {
+        panel_->SetComposeStatus(L"Previous compose is still running...");
+        return;
+    }
 
-    // Hide overlay so the game becomes the foreground window.
-    // This is essential: fullscreen DirectX games won't receive
-    // SendInput unless they are in foreground.
+    LogValue(L"[ChatTranslator] compose input: ", text);
+    panel_->SetComposeStatus(L"Translating and preparing game chat...");
+
+    if (composeThread_.joinable()) composeThread_.join();
+    composeThread_ = std::thread([this, text]() {
+        std::wstring translated = text;
+        {
+            std::lock_guard<std::mutex> g(translatorLock_);
+            if (translator_ && translator_->ProviderCount() > 0) {
+                translated = translator_->TranslateCompose(text);
+            }
+        }
+        FinishComposeSend(translated);
+        composeBusy_ = false;
+    });
+}
+
+void AppRuntime::FinishComposeSend(const std::wstring& translated)
+{
+    if (!alive_ || !panel_) return;
+
     if (panel_->IsVisible()) {
         ShowWindow(panel_->Window(), SW_HIDE);
     }
 
-    std::lock_guard<std::mutex> g(translatorLock_);
-    if (translator_ && translator_->ProviderCount() > 0) {
-        auto panel = panel_.get();
-        translator_->SubmitCompose(text, [panel](const std::wstring& translated) {
-            // Overlay is hidden, game has focus — send keys
-            SendKeysToGame(translated);
-            // Restore overlay
-            if (panel->Window() && !panel->IsVisible()) {
-                ShowWindow(panel->Window(), SW_SHOWNA);
-                SetWindowPos(panel->Window(), HWND_TOPMOST, 0, 0, 0, 0,
-                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-            }
-            panel->SetComposeStatus(L"");
-        });
-    } else {
-        SendKeysToGame(text);
-        if (panel_->Window() && !panel_->IsVisible()) {
-            ShowWindow(panel_->Window(), SW_SHOWNA);
-            SetWindowPos(panel_->Window(), HWND_TOPMOST, 0, 0, 0, 0,
-                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-        }
-        panel_->SetComposeStatus(L"");
+    bool ok = PasteTextToGameChat(translated);
+    if (panel_->Window() && !panel_->IsVisible()) {
+        ShowWindow(panel_->Window(), SW_SHOWNA);
+        SetWindowPos(panel_->Window(), HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
     }
+    panel_->PostComposeStatus(ok ? L"Pasted to game chat. Press Enter to send." : L"Send failed: game window or clipboard unavailable.");
 }
 
-// Find the game's main window by enumerating top-level windows in this process.
 static HWND FindGameWindow()
 {
     struct Ctx { DWORD pid; HWND result; };
@@ -292,13 +298,27 @@ static HWND FindGameWindow()
     return ctx.result;
 }
 
-static void SendKeysToGame(const std::wstring& text)
+static bool PasteTextToGameChat(const std::wstring& text)
 {
-    if (text.empty()) return;
+    if (text.empty()) return false;
+    HWND gameWnd = FindGameWindow();
+    if (!gameWnd) return false;
 
-    // Copy text to clipboard
+    std::wstring previousText;
+    bool hadText = false;
     bool ok = false;
+
     if (OpenClipboard(nullptr)) {
+        HANDLE old = GetClipboardData(CF_UNICODETEXT);
+        if (old) {
+            const wchar_t* oldText = static_cast<const wchar_t*>(GlobalLock(old));
+            if (oldText) {
+                previousText = oldText;
+                hadText = true;
+                GlobalUnlock(old);
+            }
+        }
+
         if (EmptyClipboard()) {
             size_t cb = (text.size() + 1) * sizeof(wchar_t);
             HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, cb);
@@ -314,19 +334,11 @@ static void SendKeysToGame(const std::wstring& text)
         }
         CloseClipboard();
     }
-    if (!ok) return;
+    if (!ok) return false;
 
-    // Wait for game to process the hidden overlay
     Sleep(250);
-
-    // Explicitly bring the game window to foreground.
-    // SendInput only works for DirectX fullscreen games when
-    // the target window is the foreground window.
-    HWND gameWnd = FindGameWindow();
-    if (gameWnd) {
-        SetForegroundWindow(gameWnd);
-        Sleep(50);
-    }
+    SetForegroundWindow(gameWnd);
+    Sleep(80);
 
     auto keyDown = [](WORD vk) {
         INPUT input = {};
@@ -344,11 +356,9 @@ static void SendKeysToGame(const std::wstring& text)
     };
     auto press = [&](WORD vk) { keyDown(vk); Sleep(25); keyUp(vk); };
 
-    // Y to open chat
     press('Y');
     Sleep(120);
 
-    // Ctrl+V to paste
     keyDown(VK_CONTROL);
     Sleep(25);
     press('V');
@@ -356,6 +366,23 @@ static void SendKeysToGame(const std::wstring& text)
     keyUp(VK_CONTROL);
     Sleep(80);
 
-    // Enter to send
-    press(VK_RETURN);
+    if (OpenClipboard(nullptr)) {
+        EmptyClipboard();
+        if (hadText) {
+            size_t cb = (previousText.size() + 1) * sizeof(wchar_t);
+            HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, cb);
+            if (hMem) {
+                wchar_t* p = static_cast<wchar_t*>(GlobalLock(hMem));
+                if (p) {
+                    memcpy(p, previousText.c_str(), cb);
+                    GlobalUnlock(hMem);
+                    if (!SetClipboardData(CF_UNICODETEXT, hMem)) GlobalFree(hMem);
+                } else {
+                    GlobalFree(hMem);
+                }
+            }
+        }
+        CloseClipboard();
+    }
+    return true;
 }

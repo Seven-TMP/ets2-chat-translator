@@ -32,6 +32,7 @@ private:
     void Log(const char* message) const;
     void LogValue(const std::wstring& prefix, const std::wstring& value) const;
     void OnComposeSubmit(const std::wstring& text);
+    void FinishComposeSend(const std::wstring& translated);
 
     HINSTANCE dll_ = nullptr;
     scs_log_t logger_ = nullptr;
@@ -43,6 +44,8 @@ private:
     std::unique_ptr<ChatPanel> panel_;
     std::unique_ptr<ChatTailer> tailer_;
     std::unique_ptr<TranslateEngine> translator_;
+    std::thread composeThread_;
+    std::atomic<bool> composeBusy_{ false };
 
     AppSettings settings_;
     std::wstring pluginFolder_;

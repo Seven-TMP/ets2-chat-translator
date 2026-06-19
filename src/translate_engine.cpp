@@ -2656,83 +2656,50 @@ bool TranslateEngine::ShouldTranslate(const std::wstring& text)
     return !text::MostlyChinese(value);
 }
 
-void TranslateEngine::SubmitCompose(const std::wstring& text, ComposeDone onDone)
+std::wstring TranslateEngine::TranslateCompose(const std::wstring& text)
 {
-    if (text.empty()) {
-        if (onDone) onDone(text);
-        return;
+    if (text.empty()) return text;
+
+    HttpAgent http(runtime_.timeoutMs);
+    std::wstring translated;
+    std::wstring errors;
+
+    for (size_t i = 0; i < providers_.size(); ++i) {
+        if (!providers_[i] || !providers_[i]->Settings().enabled) continue;
+
+        ProviderSettings swapped = providers_[i]->Settings();
+        std::wstring composeSource = EffectiveTarget(swapped, runtime_);
+        std::wstring composeTarget = (swapped.sourceLanguage.empty() || swapped.sourceLanguage == L"auto")
+            ? L"en"
+            : swapped.sourceLanguage;
+        swapped.sourceLanguage = composeSource.empty() ? L"zh-CN" : composeSource;
+        swapped.targetLanguage = composeTarget;
+
+        RuntimeConfig composeRuntime = runtime_;
+        composeRuntime.targetLanguage = composeTarget;
+
+        auto provider = MakeProvider(swapped);
+        if (!provider || !provider->Ready()) continue;
+        provider->SetLogger([this](const std::wstring& line) { LogLine(line); });
+
+        std::wstring error;
+        translated = provider->Translate(text, composeRuntime, http, error);
+        LogLine(L"[Compose] \"" + text + L"\" provider[" + std::to_wstring((int)i + 1) + L"/" +
+            std::to_wstring(providers_.size()) + L"] " + provider->Name() + L" -> " +
+            (translated.empty() ? L"(empty)" : translated) +
+            (error.empty() ? L"" : L" err=" + error));
+
+        if (!translated.empty() && translated != text && !LooksUntranslated(text, translated, composeRuntime)) {
+            return translated;
+        }
+        if (!errors.empty()) errors += L" | ";
+        errors += provider->Name() + L": " + (error.empty() ? L"returned original/non-target text" : error);
+        translated.clear();
     }
 
-    std::thread([this, text, onDone = std::move(onDone)]() {
-        HttpAgent http(runtime_.timeoutMs);
-
-        std::wstring translated;
-        std::wstring error;
-
-        for (size_t i = 0; i < providers_.size(); ++i) {
-            if (!providers_[i] || !providers_[i]->Settings().enabled) continue;
-
-            // Swap source and target: translate user's Chinese input back to the
-            // language that the provider normally translates FROM.
-            // sourceLanguage (e.g. "auto" / "en") -> targetLanguage
-            // targetLanguage (e.g. "zh-CN")   -> sourceLanguage
-            // Result: zh-CN input → en output (or whatever the source is)
-            std::wstring composeSource = providers_[i]->Settings().targetLanguage;
-            std::wstring composeTarget = (providers_[i]->Settings().sourceLanguage == L"auto"
-                || providers_[i]->Settings().sourceLanguage.empty())
-                ? L"en"
-                : providers_[i]->Settings().sourceLanguage;
-
-            RuntimeConfig composeRuntime = runtime_;
-            composeRuntime.targetLanguage = composeTarget;
-
-            // Build a temporary settings with swapped source/target so
-            // provider-internal helpers use the right direction
-            ProviderSettings swapped = providers_[i]->Settings();
-            swapped.sourceLanguage = composeSource;
-            swapped.targetLanguage = composeTarget;
-
-            // We can't call providers_[i]->Translate directly with a different
-            // ProviderSettings because the provider owns its settings.
-            // But Translate receives RuntimeConfig; EffectiveTarget checks
-            // settings_.targetLanguage first — which is still zh-CN.
-            // Workaround: create runtime with a fake targetLanguage that is really
-            // what we want, BUT the provider will still check its own settings.
-            // The key insight: translate the text with the original provider but
-            // swap the meaning of source/target.
-
-            // Actually, the simplest approach: the provider prompts say
-            // "translate chat into {target}". If target=en and source=zh-CN:
-            // the provider translates Chinese→English as desired.
-            // 
-            // The problem is EffectiveTarget() reads settings_.targetLanguage = "zh-CN"
-            // So composeRuntime.targetLanguage gets ignored.
-            //
-            // FIX: override runtime.targetLanguage AND composeRuntime.targetLanguage
-            // but we need the provider prompt to say "translate into en".
-            // Temporarily swap the provider's source/target settings
-            // so Translate() sends Chinese→English (or whatever source is)
-            auto& prov = providers_[i];
-            auto& settings = const_cast<ProviderSettings&>(prov->Settings());
-            auto origTarget = settings.targetLanguage;
-            auto origSource = settings.sourceLanguage;
-            settings.targetLanguage = composeTarget;
-            settings.sourceLanguage = composeSource;
-
-            translated = prov->Translate(text, composeRuntime, http, error);
-
-            // Restore original settings
-            settings.targetLanguage = origTarget;
-            settings.sourceLanguage = origSource;
-
-            if (!translated.empty() && translated != text &&
-                !LooksUntranslated(text, translated, composeRuntime)) {
-                break;
-            }
-            translated.clear();
-        }
-
-        if (translated.empty()) translated = text;
-        if (onDone) onDone(translated);
-    }).detach();
+    if (!errors.empty()) {
+        std::lock_guard<std::mutex> g(errorLock_);
+        lastError_ = errors;
+    }
+    return text;
 }

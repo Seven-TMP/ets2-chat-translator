@@ -41,7 +41,6 @@ class TranslateEngine
 public:
     using Done = std::function<void(unsigned int id, const std::wstring& translated)>;
     using Logger = std::function<void(const std::wstring& line)>;
-    using ComposeDone = std::function<void(const std::wstring& translated)>;
 
     TranslateEngine();
     ~TranslateEngine();
@@ -49,7 +48,7 @@ public:
     bool Start(RuntimeConfig runtime, std::vector<ProviderSettings> providers, Done done);
     void Stop();
     void Submit(unsigned int id, const std::wstring& text);
-    void SubmitCompose(const std::wstring& text, ComposeDone onDone);
+    std::wstring TranslateCompose(const std::wstring& text);
     void SetLogger(Logger logger) { logger_ = std::move(logger); }
 
     size_t ProviderCount() const { return providers_.size(); }

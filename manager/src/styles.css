@@ -1325,3 +1325,19 @@ textarea:focus {
     justify-content: flex-start;
   }
 }
+
+/* ==================== Footer ==================== */
+.footer {
+  text-align: center;
+  padding: 16px 0 32px;
+}
+
+.footer-text {
+  font-size: 12px;
+  color: #ffffff;
+  letter-spacing: 0.15em;
+  font-weight: 400;
+}
+
+
+

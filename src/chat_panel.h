@@ -2,11 +2,13 @@
 
 #include "core_types.h"
 
+#include <functional>
 #include <mutex>
 #include <queue>
 #include <string>
 #include <vector>
 #include <windows.h>
+#include <imm.h>
 
 class ChatPanel
 {
@@ -21,12 +23,16 @@ public:
     bool SetOverlayHotkey(const std::wstring& hotkey);
     void SetCloseButtonExits(bool value) { closeButtonExits_ = value; }
 
+    using ComposeCallback = std::function<void(const std::wstring& text)>;
+
     unsigned int Push(ChatEntry entry);
     void PatchTranslation(unsigned int id, const std::wstring& text);
     void Status(const std::wstring& text);
     void ToggleVisible();
     HWND Window() const { return hwnd_; }
     bool IsVisible() const { return hwnd_ && IsWindowVisible(hwnd_) != FALSE; }
+    void SetComposeCallback(ComposeCallback cb) { composeCallback_ = std::move(cb); }
+    void SetComposeStatus(const std::wstring& text);
 
 private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
@@ -34,10 +40,14 @@ private:
     void Paint(HDC dc, RECT bounds);
     void RenderLayered();
     void LayoutSearchBox(RECT bounds);
+    void LayoutComposeBox(RECT bounds);
     void SetSearchText(std::wstring text);
     void SetSearchFocus(bool focused);
+    void SetComposeFocus(bool focused);
     bool SearchBoxHit(int x, int y) const;
+    bool ComposeBoxHit(int x, int y) const;
     bool HandleSearchKey(UINT msg, WPARAM wp);
+    bool HandleComposeKey(UINT msg, WPARAM wp);
     bool EntryMatches(const ChatEntry& entry) const;
     int MatchCountUnlocked() const;
     void UpdateContentWidth(int clientWidth);
@@ -85,6 +95,24 @@ private:
     std::wstring overlayHotkey_ = L"Ctrl+Shift+T";
     std::wstring windowStatePath_;
     RECT searchBoxRect_{};
+
+    ComposeCallback composeCallback_;
+    std::wstring composeInputText_;
+    std::wstring composeStatus_;
+    bool composeFocused_ = false;
+    bool composeCaretVisible_ = false;
+    RECT composeBoxRect_{};
+    int composeCursorPos_ = 0;           // cursor position within composeInputText_
+    std::wstring composeImeComp_ = L"";  // IME composition string
+    UINT_PTR composeTimerId_ = 0;        // cursor blink timer
+    bool composeCaretOn_ = false;        // current blink state
+
+    void StartComposeCaret();
+    void StopComposeCaret();
+    RECT ComposeCaretRect(HDC dc) const;
+    LRESULT HandleImeStartComposition();
+    LRESULT HandleImeComposition(WPARAM wp, LPARAM lp);
+    LRESULT HandleImeEndComposition();
 
     void DrainPending();
 };

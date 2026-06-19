@@ -103,7 +103,7 @@ graph TD
 ```
 
 1. **下载并运行安装包**：
-   双击运行 `build\installer\ETS2-Chat-Translator-Manager-Setup-0.3.16.exe` 进行安装。
+   双击运行 `build\installer\ETS2-Chat-Translator-Manager-Setup-0.3.17.exe` 进行安装。
 2. **打开管理器**：启动安装好的 `ETS2 Chat Translator Manager`。
 3. **识别游戏目录**：选择对应的游戏（ETS2 或 ATS），管理器会尝试自动定位。若未找到，可手动选择游戏主程序所在的 bin 目录。
 4. **一键部署 DLL**：点击 `安装 / 更新 DLL` 按钮。
@@ -295,7 +295,7 @@ build/
 ├── ets2_chat_translator_app/                       # 绿色版管理器 (绿色免安装)
 │   └── ETS2 Chat Translator Manager.exe
 └── installer/
-    └── ETS2-Chat-Translator-Manager-Setup-0.3.16.exe # 独立安装包 (集成 NSIS)
+    └── ETS2-Chat-Translator-Manager-Setup-0.3.17.exe # 独立安装包 (集成 NSIS)
 ```
 
 ---
@@ -349,6 +349,10 @@ build/
 ---
 
 ## 🧾 历史版本更新
+
+### 🚀 v0.3.17
+* **🎮 发送中译英内容**：支持中译英发送至游戏，翻译完成后发送消息到游戏聊天。
+* **🏷️ 管理器作者署名**：管理器页面底部添加作者信息。
 
 ### 🚀 v0.3.16
 * **🧩 聊天短句误翻修复**：`goo` 等 2-3 字母噪音不再误翻成问候，`o////` 这类挥手/装饰符号会直接原样显示。

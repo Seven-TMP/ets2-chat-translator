@@ -9,6 +9,8 @@
 #include <sstream>
 #include <windowsx.h>
 
+#pragma comment(lib, "imm32")
+
 namespace
 {
 const wchar_t* kClass = L"ETS2TranslatorPanelV4Simple";
@@ -572,6 +574,7 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         RECT rc{};
         GetClientRect(hwnd, &rc);
         self->LayoutSearchBox(rc);
+        self->LayoutComposeBox(rc);
         return 0;
     }
 
@@ -602,6 +605,7 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         SetWindowRgn(hwnd, rgn, TRUE);
         RECT rc{ 0, 0, cx, cy };
         self->LayoutSearchBox(rc);
+        self->LayoutComposeBox(rc);
         self->RenderLayered();
         return 0;
     }
@@ -611,13 +615,16 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     case WM_CHAR:
     case WM_KEYDOWN:
         if (self->HandleSearchKey(msg, wp)) return 0;
+        if (self->HandleComposeKey(msg, wp)) return 0;
         break;
     case WM_SETFOCUS:
         if (self->searchFocused_) self->searchCaretVisible_ = true;
+        if (self->composeFocused_) self->composeCaretVisible_ = true;
         self->RenderLayered();
         return 0;
     case WM_KILLFOCUS:
         self->SetSearchFocus(false);
+        self->SetComposeFocus(false);
         return 0;
     case WM_MOUSEWHEEL:
         self->OnWheel(GET_WHEEL_DELTA_WPARAM(wp));
@@ -628,6 +635,22 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     case WM_LBUTTONDOWN:
         self->OnClick(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
         return 0;
+    case WM_IME_STARTCOMPOSITION:
+        if (self->composeFocused_) return self->HandleImeStartComposition();
+        break;
+    case WM_IME_COMPOSITION:
+        if (self->composeFocused_) return self->HandleImeComposition(wp, lp);
+        break;
+    case WM_IME_ENDCOMPOSITION:
+        if (self->composeFocused_) return self->HandleImeEndComposition();
+        break;
+    case WM_TIMER:
+        if (wp == (WPARAM)self->composeTimerId_ && self->composeFocused_) {
+            self->composeCaretOn_ = !self->composeCaretOn_;
+            self->RenderLayered();
+            return 0;
+        }
+        break;
     case WM_APP + 1:
         self->ScrollToEnd();
         return 0;
@@ -813,7 +836,10 @@ void ChatPanel::Paint(HDC dc, RECT bounds)
     RECT statusText{ statusBox.left + 28, statusBox.top, statusBox.right - 12, statusBox.bottom };
     DrawTextLine(dc, smallFont_, cDim, CompactStatus(status), statusText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
-    RECT area{ 0, topBand_ + statusBand_, bounds.right, bounds.bottom - 8 };
+    bool hasComposeBox = composeBoxRect_.right > composeBoxRect_.left && composeBoxRect_.bottom > composeBoxRect_.top;
+    int areaBottom = hasComposeBox ? (composeBoxRect_.top - 4) : (bounds.bottom - 8);
+    if (areaBottom < topBand_ + statusBand_ + 20) areaBottom = bounds.bottom - 8;
+    RECT area{ 0, topBand_ + statusBand_, bounds.right, areaBottom };
     HRGN clip = CreateRectRgn(area.left, area.top, area.right, area.bottom);
     SelectClipRgn(dc, clip);
 
@@ -878,6 +904,77 @@ void ChatPanel::Paint(HDC dc, RECT bounds)
     SelectClipRgn(dc, nullptr);
     DeleteObject(clip);
 
+    if (hasComposeBox) {
+        RoundFill(dc, composeBoxRect_, 8, composeFocused_ ? RGB(13, 22, 34) : RGB(11, 16, 24));
+        StrokeRound(dc, composeBoxRect_, 8, composeFocused_ ? cCyan : RGB(52, 64, 86));
+
+        std::wstring value;
+        std::wstring status;
+        bool focused = false;
+        bool caret = false;
+        bool caretOn = false;
+        std::wstring imeComp;
+        int cursorPos = 0;
+        {
+            std::lock_guard<std::mutex> guard(lock_);
+            value = composeInputText_;
+            status = composeStatus_;
+            focused = composeFocused_;
+            caret = composeCaretVisible_;
+            caretOn = composeCaretOn_;
+            imeComp = composeImeComp_;
+            cursorPos = composeCursorPos_;
+        }
+
+        RECT textRc{ composeBoxRect_.left + 12, composeBoxRect_.top,
+            composeBoxRect_.right - 12, composeBoxRect_.bottom };
+        if (!status.empty()) {
+            DrawTextLine(dc, smallFont_, cCyan, status, textRc,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        } else if (value.empty() && imeComp.empty()) {
+            DrawTextLine(dc, smallFont_, RGB(105, 118, 138), L"输入中文，回车翻译并发送到游戏聊天...", textRc,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        } else {
+            // Build display text: text before cursor + IME comp + text after cursor
+            std::wstring before = value.substr(0, cursorPos);
+            std::wstring after = value.substr(cursorPos);
+            std::wstring display = before + imeComp + after;
+
+            // Draw the full text
+            RECT displayRc = textRc;
+            DrawTextLine(dc, smallFont_, cText, display, displayRc,
+                DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+
+            if (focused) {
+                // Calculate cursor X position (before text + IME comp start)
+                std::wstring beforeCursor = before;
+                int cursorX = TextWidth(dc, smallFont_, beforeCursor);
+                int caretX = textRc.left + cursorX;
+
+                // Draw IME composition underline if active
+                if (!imeComp.empty()) {
+                    int compW = TextWidth(dc, smallFont_, imeComp);
+                    int compLeft = textRc.left + TextWidth(dc, smallFont_, before);
+                    int compRight = (std::min)(compLeft + compW, (int)(textRc.right - 2));
+                    int underlineY = textRc.bottom - 4;
+                    HPEN pen = CreatePen(PS_SOLID, 1, cCyan);
+                    HGDIOBJ oldPen = SelectObject(dc, pen);
+                    MoveToEx(dc, compLeft, underlineY, nullptr);
+                    LineTo(dc, compRight, underlineY);
+                    SelectObject(dc, oldPen);
+                    DeleteObject(pen);
+                }
+
+                // Draw blinking cursor at the correct position
+                if (caret && caretOn) {
+                    RECT cursorRc{ caretX, textRc.top + 6,
+                        caretX + 1, textRc.bottom - 6 };
+                    Fill(dc, cursorRc, cCyan);
+                }
+            }
+        }
+    }
+
     int content = ContentHeight(dc);
     int view = area.bottom - area.top;
     if (content > view) {
@@ -891,12 +988,14 @@ void ChatPanel::Paint(HDC dc, RECT bounds)
         RECT thumb{ bounds.right - 10, thumbTop, bounds.right - 6, thumbTop + thumbH };
         RoundFill(dc, thumb, 4, RGB(92, 110, 140));
     }
+
 }
 
 void ChatPanel::UpdateContentWidth(int clientWidth)
 {
     int left = 12;
     int right = clientWidth - 16;
+
     contentWidth_ = (std::max)(120, right - left - 24);
 }
 
@@ -921,6 +1020,28 @@ void ChatPanel::LayoutSearchBox(RECT bounds)
 
     int right = left + width;
     searchBoxRect_ = { left, top, right, bottom };
+}
+
+void ChatPanel::LayoutComposeBox(RECT bounds)
+{
+    composeBoxRect_ = {};
+
+    int clientWidth = (int)bounds.right;
+    int clientHeight = (int)bounds.bottom;
+    int composeH = (std::max)(36, (std::min)(48, fontSize_ + 24));
+    int margin = 10;
+    int y = clientHeight - composeH - margin;
+    if (y < topBand_ + statusBand_ + 60) {
+        composeFocused_ = false;
+        composeCaretVisible_ = false;
+        return;
+    }
+
+    int left = margin + 6;
+    int right = clientWidth - margin - 6;
+    if (right - left < 120) return;
+
+    composeBoxRect_ = { left, y, right, y + composeH };
 }
 
 void ChatPanel::SetSearchText(std::wstring text)
@@ -1113,9 +1234,17 @@ void ChatPanel::OnClick(int x, int y)
     if (SearchBoxHit(x, y)) {
         SetFocus(hwnd_);
         SetSearchFocus(true);
+        SetComposeFocus(false);
+        return;
+    }
+    if (ComposeBoxHit(x, y)) {
+        SetFocus(hwnd_);
+        SetComposeFocus(true);
+        SetSearchFocus(false);
         return;
     }
     if (searchFocused_) SetSearchFocus(false);
+    if (composeFocused_) SetComposeFocus(false);
     if (y >= 6 && y <= topBand_ - 6 && x >= rc.right - 34 && x <= rc.right - 10) {
         if (closeButtonExits_) {
             closing_ = true;
@@ -1124,4 +1253,252 @@ void ChatPanel::OnClick(int x, int y)
             ShowWindow(hwnd_, SW_HIDE);
         }
     }
+}
+
+void ChatPanel::SetComposeStatus(const std::wstring& text)
+{
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        composeStatus_ = text;
+    }
+    if (hwnd_) RenderLayered();
+}
+
+void ChatPanel::SetComposeFocus(bool focused)
+{
+    bool changed = false;
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        changed = composeFocused_ != focused || composeCaretVisible_ != focused;
+        composeFocused_ = focused;
+        composeCaretVisible_ = focused;
+        if (focused) {
+            composeCaretOn_ = true;
+        } else {
+            composeCaretOn_ = false;
+            composeImeComp_.clear();
+        }
+    }
+    if (focused) {
+        StartComposeCaret();
+    } else {
+        StopComposeCaret();
+    }
+    if (changed) RenderLayered();
+}
+
+bool ChatPanel::ComposeBoxHit(int x, int y) const
+{
+    return composeBoxRect_.right > composeBoxRect_.left &&
+        x >= composeBoxRect_.left && x <= composeBoxRect_.right &&
+        y >= composeBoxRect_.top && y <= composeBoxRect_.bottom;
+}
+
+bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
+{
+    if (!composeFocused_) return false;
+
+    if (msg == WM_KEYDOWN) {
+        if (wp == VK_LEFT) {
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                if (composeCursorPos_ > 0) --composeCursorPos_;
+            }
+            RenderLayered();
+            return true;
+        }
+        if (wp == VK_RIGHT) {
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                if (composeCursorPos_ < (int)composeInputText_.size()) ++composeCursorPos_;
+            }
+            RenderLayered();
+            return true;
+        }
+        if (wp == VK_HOME) {
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                composeCursorPos_ = 0;
+            }
+            RenderLayered();
+            return true;
+        }
+        if (wp == VK_END) {
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                composeCursorPos_ = (int)composeInputText_.size();
+            }
+            RenderLayered();
+            return true;
+        }
+        if (wp == VK_DELETE) {
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                if (composeCursorPos_ < (int)composeInputText_.size()) {
+                    composeInputText_.erase(composeCursorPos_, 1);
+                }
+            }
+            RenderLayered();
+            return true;
+        }
+        if (wp == VK_BACK) {
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                if (composeCursorPos_ > 0) {
+                    composeInputText_.erase(composeCursorPos_ - 1, 1);
+                    --composeCursorPos_;
+                }
+            }
+            RenderLayered();
+            return true;
+        }
+        if (wp == VK_ESCAPE) {
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                composeInputText_.clear();
+                composeCursorPos_ = 0;
+            }
+            SetComposeFocus(false);
+            RenderLayered();
+            return true;
+        }
+        if (wp == VK_RETURN) {
+            std::wstring text;
+            ComposeCallback cb;
+            HWND hwnd = nullptr;
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                text = text::Trim(composeInputText_);
+                cb = composeCallback_;
+                composeInputText_.clear();
+                composeCursorPos_ = 0;
+                composeStatus_ = L"";
+                hwnd = hwnd_;
+            }
+            SetComposeFocus(false);
+            // Release focus so the game can receive keyboard simulation
+            if (hwnd && GetFocus() == hwnd) SetFocus(nullptr);
+            if (!text.empty() && cb) {
+                cb(text);
+            }
+            RenderLayered();
+            return true;
+        }
+        if (wp == VK_UP || wp == VK_DOWN || wp == VK_TAB) {
+            return true;
+        }
+        return false;
+    }
+
+    if (msg == WM_CHAR) {
+        wchar_t ch = (wchar_t)wp;
+        if (ch < 0x20 || ch == 0x7F) return true;
+        {
+            std::lock_guard<std::mutex> guard(lock_);
+            if (composeInputText_.size() < 200) {
+                composeInputText_.insert(composeCursorPos_, 1, ch);
+                ++composeCursorPos_;
+            }
+        }
+        RenderLayered();
+        return true;
+    }
+
+    return false;
+}
+
+void ChatPanel::StartComposeCaret()
+{
+    if (composeTimerId_) return;
+    composeCaretOn_ = true;
+    composeTimerId_ = SetTimer(hwnd_, 1, 530, nullptr);
+}
+
+void ChatPanel::StopComposeCaret()
+{
+    if (composeTimerId_) {
+        KillTimer(hwnd_, composeTimerId_);
+        composeTimerId_ = 0;
+    }
+    composeCaretOn_ = false;
+}
+
+RECT ChatPanel::ComposeCaretRect(HDC dc) const
+{
+    if (!composeFocused_) return{};
+    std::wstring before = composeInputText_.substr(0, composeCursorPos_);
+    int cursorX = TextWidth(dc, smallFont_, before);
+    RECT textRc{ composeBoxRect_.left + 12, composeBoxRect_.top,
+        composeBoxRect_.right - 12, composeBoxRect_.bottom };
+    return{ textRc.left + cursorX, textRc.top + 6,
+        textRc.left + cursorX + 1, textRc.bottom - 6 };
+}
+
+LRESULT ChatPanel::HandleImeStartComposition()
+{
+    HIMC himc = ImmGetContext(hwnd_);
+    if (himc) {
+        // Set composition window position near the caret
+        COMPOSITIONFORM cf = {};
+        RECT textRc{ composeBoxRect_.left + 12, composeBoxRect_.top,
+            composeBoxRect_.right - 12, composeBoxRect_.bottom };
+        cf.dwStyle = CFS_POINT;
+        cf.ptCurrentPos.x = textRc.left;
+        cf.ptCurrentPos.y = textRc.top;
+        ImmSetCompositionWindow(himc, &cf);
+        ImmReleaseContext(hwnd_, himc);
+    }
+    return TRUE;
+}
+
+LRESULT ChatPanel::HandleImeComposition(WPARAM wp, LPARAM lp)
+{
+    HIMC himc = ImmGetContext(hwnd_);
+    if (!himc) return TRUE;
+
+    if (lp & GCS_COMPSTR) {
+        // Get the composition string (what the IME is currently composing)
+        LONG len = ImmGetCompositionStringW(himc, GCS_COMPSTR, nullptr, 0);
+        if (len > 0) {
+            std::wstring comp(len / sizeof(wchar_t), L'\0');
+            ImmGetCompositionStringW(himc, GCS_COMPSTR, &comp[0], len);
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                composeImeComp_ = comp;
+            }
+        }
+        RenderLayered();
+    }
+
+    if (lp & GCS_RESULTSTR) {
+        // Get the finalized string from IME
+        LONG len = ImmGetCompositionStringW(himc, GCS_RESULTSTR, nullptr, 0);
+        if (len > 0) {
+            std::wstring result(len / sizeof(wchar_t), L'\0');
+            ImmGetCompositionStringW(himc, GCS_RESULTSTR, &result[0], len);
+            {
+                std::lock_guard<std::mutex> guard(lock_);
+                composeInputText_.insert(composeCursorPos_, result);
+                composeCursorPos_ += (int)result.size();
+                composeImeComp_.clear();
+            }
+        } else {
+            std::lock_guard<std::mutex> guard(lock_);
+            composeImeComp_.clear();
+        }
+        RenderLayered();
+    }
+
+    ImmReleaseContext(hwnd_, himc);
+    return TRUE;
+}
+
+LRESULT ChatPanel::HandleImeEndComposition()
+{
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        composeImeComp_.clear();
+    }
+    RenderLayered();
+    return TRUE;
 }

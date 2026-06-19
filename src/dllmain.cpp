@@ -34,7 +34,7 @@ extern "C" __declspec(dllexport) SCSAPI_RESULT scs_telemetry_init(
 
     if (g_gameLog) {
         g_gameLog(SCS_LOG_TYPE_message, "[ChatTranslator] ===================================");
-        g_gameLog(SCS_LOG_TYPE_message, "[ChatTranslator] ETS2/ATS TruckersMP Chat Translator v0.3.16");
+        g_gameLog(SCS_LOG_TYPE_message, "[ChatTranslator] ETS2/ATS TruckersMP Chat Translator v0.3.17");
         g_gameLog(SCS_LOG_TYPE_message, "[ChatTranslator] Initializing...");
     }
 

@@ -31,6 +31,7 @@ private:
     FILETIME ConfigWriteTime() const;
     void Log(const char* message) const;
     void LogValue(const std::wstring& prefix, const std::wstring& value) const;
+    void OnComposeSubmit(const std::wstring& text);
 
     HINSTANCE dll_ = nullptr;
     scs_log_t logger_ = nullptr;

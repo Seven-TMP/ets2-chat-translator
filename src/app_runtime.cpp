@@ -74,6 +74,9 @@ bool AppRuntime::Boot()
         Log("[ChatTranslator] failed to create panel");
         return false;
     }
+    panel_->SetComposeCallback([this](const std::wstring& text) {
+        OnComposeSubmit(text);
+    });
     Log("[ChatTranslator] panel created");
 
     bool translationOk = StartTranslator();
@@ -228,4 +231,131 @@ void AppRuntime::LogValue(const std::wstring& prefix, const std::wstring& value)
     if (!logger_) return;
     std::string msg = text::ToUtf8(prefix + value);
     logger_(SCS_LOG_TYPE_message, msg.c_str());
+}
+
+static void SendKeysToGame(const std::wstring& text);
+
+void AppRuntime::OnComposeSubmit(const std::wstring& text)
+{
+    if (!alive_ || !panel_) return;
+    LogValue(L"[ChatTranslator] compose input: ", text);
+
+    // Hide overlay so the game becomes the foreground window.
+    // This is essential: fullscreen DirectX games won't receive
+    // SendInput unless they are in foreground.
+    if (panel_->IsVisible()) {
+        ShowWindow(panel_->Window(), SW_HIDE);
+    }
+
+    std::lock_guard<std::mutex> g(translatorLock_);
+    if (translator_ && translator_->ProviderCount() > 0) {
+        auto panel = panel_.get();
+        translator_->SubmitCompose(text, [panel](const std::wstring& translated) {
+            // Overlay is hidden, game has focus — send keys
+            SendKeysToGame(translated);
+            // Restore overlay
+            if (panel->Window() && !panel->IsVisible()) {
+                ShowWindow(panel->Window(), SW_SHOWNA);
+                SetWindowPos(panel->Window(), HWND_TOPMOST, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+            }
+            panel->SetComposeStatus(L"");
+        });
+    } else {
+        SendKeysToGame(text);
+        if (panel_->Window() && !panel_->IsVisible()) {
+            ShowWindow(panel_->Window(), SW_SHOWNA);
+            SetWindowPos(panel_->Window(), HWND_TOPMOST, 0, 0, 0, 0,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        }
+        panel_->SetComposeStatus(L"");
+    }
+}
+
+// Find the game's main window by enumerating top-level windows in this process.
+static HWND FindGameWindow()
+{
+    struct Ctx { DWORD pid; HWND result; };
+    Ctx ctx{ GetCurrentProcessId(), nullptr };
+
+    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+        auto& ctx = *reinterpret_cast<Ctx*>(lParam);
+        DWORD wp = 0;
+        GetWindowThreadProcessId(hwnd, &wp);
+        if (wp != ctx.pid) return TRUE;
+        if (!IsWindowVisible(hwnd)) return TRUE;
+        if (GetWindow(hwnd, GW_OWNER) != nullptr) return TRUE;
+        ctx.result = hwnd;
+        return FALSE;
+    }, reinterpret_cast<LPARAM>(&ctx));
+
+    return ctx.result;
+}
+
+static void SendKeysToGame(const std::wstring& text)
+{
+    if (text.empty()) return;
+
+    // Copy text to clipboard
+    bool ok = false;
+    if (OpenClipboard(nullptr)) {
+        if (EmptyClipboard()) {
+            size_t cb = (text.size() + 1) * sizeof(wchar_t);
+            HGLOBAL hMem = GlobalAlloc(GMEM_MOVEABLE, cb);
+            if (hMem) {
+                wchar_t* p = static_cast<wchar_t*>(GlobalLock(hMem));
+                if (p) {
+                    memcpy(p, text.c_str(), cb);
+                    GlobalUnlock(hMem);
+                    ok = SetClipboardData(CF_UNICODETEXT, hMem) != nullptr;
+                }
+                if (!ok) GlobalFree(hMem);
+            }
+        }
+        CloseClipboard();
+    }
+    if (!ok) return;
+
+    // Wait for game to process the hidden overlay
+    Sleep(250);
+
+    // Explicitly bring the game window to foreground.
+    // SendInput only works for DirectX fullscreen games when
+    // the target window is the foreground window.
+    HWND gameWnd = FindGameWindow();
+    if (gameWnd) {
+        SetForegroundWindow(gameWnd);
+        Sleep(50);
+    }
+
+    auto keyDown = [](WORD vk) {
+        INPUT input = {};
+        input.type = INPUT_KEYBOARD;
+        input.ki.wVk = vk;
+        SendInput(1, &input, sizeof(INPUT));
+    };
+
+    auto keyUp = [](WORD vk) {
+        INPUT input = {};
+        input.type = INPUT_KEYBOARD;
+        input.ki.wVk = vk;
+        input.ki.dwFlags = KEYEVENTF_KEYUP;
+        SendInput(1, &input, sizeof(INPUT));
+    };
+    auto press = [&](WORD vk) { keyDown(vk); Sleep(25); keyUp(vk); };
+
+    // Y to open chat
+    press('Y');
+    Sleep(120);
+
+    // Ctrl+V to paste
+    keyDown(VK_CONTROL);
+    Sleep(25);
+    press('V');
+    Sleep(25);
+    keyUp(VK_CONTROL);
+    Sleep(80);
+
+    // Enter to send
+    press(VK_RETURN);
 }

@@ -134,10 +134,10 @@ graph TD
 推荐：低延迟、高性价比。
 
 **适用场景：**
-* **OpenAI 官方**: 访问 [OpenAI Platform](https://platform.openai.com/api-keys) 获取。
-* **硅基流动 (SiliconFlow)**: 提供超多开源大模型的高速中转。访问 [硅基流动官网](https://cloud.siliconflow.cn/account/ak) 注册，Base URL 填 `https://api.siliconflow.cn/v1` .
+* **OpenAI 官方**: [官网](https://openai.com/) / [API Key 控制台](https://platform.openai.com/api-keys) / [API 文档](https://platform.openai.com/docs)。Base URL 填 `https://api.openai.com/v1`。
+* **硅基流动 (SiliconFlow)**: [官网](https://www.siliconflow.cn/) / [API Key 控制台](https://cloud.siliconflow.cn/account/ak) / [文档](https://docs.siliconflow.cn/)。Base URL 填 `https://api.siliconflow.cn/v1`。
 * **小米 MiMo 开放平台（强力推荐）**: 我在用 MiMo 开放平台，体验小米顶尖模型 MiMo V2.5 等。通过我的邀请码注册：双方各得 ¥10 API 体验金 + 首单 9 折。邀请码：`TM9LQB`。注册：[https://platform.xiaomimimo.com?ref=TM9LQB](https://platform.xiaomimimo.com?ref=TM9LQB)（注册后自动填入 · 体验金 40 天有效）。Base URL 填 `https://api.xiaomimimo.com/v1`。
-* **本地化部署 (Ollama / LM Studio)**: 本地或远端离线翻译。Ollama 的 OpenAI 兼容 Base URL 通常为 `http://localhost:11434/v1`；如果 Ollama 装在别的电脑，请填写 `http://远端IP:11434/v1`，不要填 `localhost`，也不要填 `/api`。API Key 可留空或填任意字符。27B 这类本地大模型建议 `workers=1`、`timeout_ms=30000`，避免并发排队导致忽快忽慢。
+* **本地化部署 (Ollama / LM Studio)**: [Ollama 官网](https://ollama.com/) / [Ollama OpenAI 兼容文档](https://docs.ollama.com/api/openai-compatibility) / [LM Studio 官网](https://lmstudio.ai/)。本地或远端离线翻译。Ollama 的 OpenAI 兼容 Base URL 通常为 `http://localhost:11434/v1`；如果 Ollama 装在别的电脑，请填写 `http://远端IP:11434/v1`，不要填 `localhost`，也不要填 `/api`。API Key 可留空或填任意字符。27B 这类本地大模型建议 `workers=1`、`timeout_ms=30000`，避免并发排队导致忽快忽慢。
 
 **配置模板 (`kind: "openai_compatible"`)：**
 
@@ -161,7 +161,7 @@ graph TD
 高端机翻译体验。
 
 **获取步骤：**
-1. 访问 [Anthropic Console](https://console.anthropic.com/settings/keys) 注册并生成 Key。
+1. 访问 [Anthropic 官网](https://www.anthropic.com/) / [Claude API Key 控制台](https://platform.claude.com/settings/keys) / [API 文档](https://docs.claude.com/) 注册并生成 Key。
 2. 推荐使用轻量且高质量的 `claude-4-5-haiku-latest` 模型。
 
 **配置模板 (`kind: "anthropic"`)：**
@@ -184,7 +184,7 @@ graph TD
 <summary><b>🤖 3. DeepSeek 官方接口</b></summary>
 
 **获取步骤：**
-1. 访问 [DeepSeek 开放平台](https://platform.deepseek.com/) 注册账号。
+1. 访问 [DeepSeek 官网](https://www.deepseek.com/) / [开放平台](https://platform.deepseek.com/) / [API 文档](https://api-docs.deepseek.com/) 注册账号。
 2. 进入 API Keys 页面，创建并复制您的密钥。
 
 **配置模板 (`kind: "deepseek"`)：**
@@ -212,17 +212,31 @@ graph TD
 传统翻译 API 通常稳定性极佳，且都有一定的每月免费额度。
 
 * **DeepL (`deepl`)**:
+  - 开放平台官网: [DeepL API](https://www.deepl.com/pro-api)；开发文档: [DeepL Developers](https://developers.deepl.com/)。
   - 免费版 Base URL: `https://api-free.deepl.com`
   - 专业版 Base URL: `https://api.deepl.com`
 * **微软 Azure 翻译 (`microsoft`)**:
+  - 开放平台官网: [Azure AI Translator](https://azure.microsoft.com/products/ai-services/ai-translator)；控制台: [Azure Portal](https://portal.azure.com/)；文档: [Microsoft Learn](https://learn.microsoft.com/azure/ai-services/translator/)。
   - 需要在 `api_secret` 字段中填写您服务所在的 Azure 区域（如 `eastasia`、`global`）。
+* **Google Cloud 翻译 (`google_cloud`)**:
+  - 开放平台官网: [Cloud Translation](https://cloud.google.com/translate)；控制台: [Google Cloud Console](https://console.cloud.google.com/apis/library/translate.googleapis.com)；文档: [Cloud Translation docs](https://cloud.google.com/translate/docs)。
+  - `api_key` 填 Google Cloud API Key，Base URL 通常为 `https://translation.googleapis.com`。
 * **百度翻译 (`baidu`)**:
+  - 开放平台官网: [百度翻译开放平台](https://fanyi-api.baidu.com/)；通用翻译 API: [接入文档](https://fanyi-api.baidu.com/doc/21)。
   - `api_key` 填 **APP ID**，`api_secret` 填 **应用密钥**。
   - 插件会自动把 `zh-CN` 映射为百度专用的 `zh` 代码，避免 `INVALID_TO_PARAM` 报错。
 * **腾讯云翻译 (`tencent`)**:
+  - 开放平台官网: [腾讯云机器翻译 TMT](https://cloud.tencent.com/product/tmt)；控制台: [腾讯云控制台](https://console.cloud.tencent.com/tmt)；文档: [API 文档](https://cloud.tencent.com/document/product/551)。
   - `api_key` 填 **SecretId**，`api_secret` 填 **SecretKey**，`model` 填区域（如 `ap-guangzhou`）。
+* **阿里云机器翻译 (`aliyun`)**:
+  - 开放平台官网: [阿里云文本翻译](https://www.aliyun.com/product/ai/base_alimt)；控制台: [阿里云控制台](https://mt.console.aliyun.com/)；文档: [机器翻译文档](https://help.aliyun.com/product/30396.html)。
+  - `api_key` 填 **AccessKey ID**，`api_secret` 填 **AccessKey Secret**，`model` 可填场景（默认 `general`）。
 * **火山翻译 (`volcengine`)**:
+  - 开放平台官网: [火山引擎机器翻译](https://www.volcengine.com/product/machine-translation)；控制台: [火山引擎控制台](https://console.volcengine.com/)；文档: [机器翻译文档](https://www.volcengine.com/docs/4640)。
   - `api_key` 填 **Access Key ID**，`api_secret` 填 **Secret Access Key**。
+* **有道智云 (`youdao`)**:
+  - 开放平台官网: [有道智云文本翻译](https://ai.youdao.com/product-fanyi-text.s)；控制台: [有道智云控制台](https://ai.youdao.com/console/)；文档: [接入指南](https://ai.youdao.com/DOCSIRMA/html/trans/api/wbfy/index.html)。
+  - `api_key` 填 **应用 ID / AppKey**，`api_secret` 填 **应用密钥 / AppSecret**。
 </details>
 
 <details>
@@ -230,8 +244,8 @@ graph TD
 
 如果您没有上述任何平台的 Key，可以使用内置的免 Key 兜底通道：
 
-* **MyMemory (`mymemory`)**: 免费公共接口，适合简单句子的日常翻译。
-* **LibreTranslate (`libretranslate`)**: 开源的去中心化翻译服务，需填写可用的公共节点 Base URL。
+* **MyMemory (`mymemory`)**: [官网](https://mymemory.translated.net/) / [API 文档](https://mymemory.translated.net/doc/spec.php)。免费公共接口，适合简单句子的日常翻译。
+* **LibreTranslate (`libretranslate`)**: [官网](https://libretranslate.com/) / [API 文档](https://libretranslate.com/docs/) / [项目仓库](https://github.com/LibreTranslate/LibreTranslate)。开源的去中心化翻译服务，需填写可用的公共节点 Base URL。
 </details>
 
 ---

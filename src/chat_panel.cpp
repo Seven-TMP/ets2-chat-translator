@@ -1194,7 +1194,9 @@ void ChatPanel::ScrollToEnd()
     RECT rc{};
     GetClientRect(hwnd_, &rc);
     UpdateContentWidth(rc.right);
-    int view = rc.bottom - topBand_ - statusBand_ - 8;
+    bool hasCompose = composeBoxRect_.right > composeBoxRect_.left && composeBoxRect_.bottom > composeBoxRect_.top;
+    int areaBottom = hasCompose ? (composeBoxRect_.top - 4) : (rc.bottom - 8);
+    int view = areaBottom - topBand_ - statusBand_;
     HDC dc = GetDC(hwnd_);
     {
         std::lock_guard<std::mutex> guard(lock_);
@@ -1213,7 +1215,9 @@ void ChatPanel::OnWheel(int delta)
     RECT rc{};
     GetClientRect(hwnd_, &rc);
     UpdateContentWidth(rc.right);
-    int view = rc.bottom - topBand_ - statusBand_ - 8;
+    bool hasCompose = composeBoxRect_.right > composeBoxRect_.left && composeBoxRect_.bottom > composeBoxRect_.top;
+    int areaBottom = hasCompose ? (composeBoxRect_.top - 4) : (rc.bottom - 8);
+    int view = areaBottom - topBand_ - statusBand_;
     HDC dc = GetDC(hwnd_);
     {
         std::lock_guard<std::mutex> guard(lock_);

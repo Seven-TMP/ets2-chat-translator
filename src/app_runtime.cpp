@@ -1,5 +1,7 @@
 #include "app_runtime.h"
 
+#include "game_window.h"
+#include "overlay_link.h"
 #include "text_codec.h"
 #include "win_paths.h"
 
@@ -36,7 +38,10 @@ void AppRuntime::Stop()
 
     if (tailer_) tailer_->Stop();
     if (translator_) translator_->Stop();
-    if (panel_ && panel_->Window()) PostMessageW(panel_->Window(), WM_CLOSE, 0, 0);
+    if (panel_) {
+        overlay_link::Retract(panel_.get());
+        if (panel_->Window()) PostMessageW(panel_->Window(), WM_CLOSE, 0, 0);
+    }
 
     if (composeThread_.joinable()) composeThread_.join();
     if (ui_.joinable()) ui_.join();
@@ -59,7 +64,7 @@ bool AppRuntime::Boot()
 {
     pluginFolder_ = paths::ModuleFolder(dll_);
     configFile_ = pluginFolder_ + L"\\ets2_chat_translator_config.json";
-    windowStateFile_ = pluginFolder_ + L"\\ets2_chat_translator_window.json";
+    overlayGeometryFile_ = pluginFolder_ + L"\\ets2_chat_translator_window.json";
     std::wstring lowerGame = gameId_ + L" " + gameName_;
     std::transform(lowerGame.begin(), lowerGame.end(), lowerGame.begin(), [](wchar_t ch) {
         return (wchar_t)towlower(ch);
@@ -72,15 +77,17 @@ bool AppRuntime::Boot()
     settings_ = settings::Load(configFile_);
     configWriteTime_ = ConfigWriteTime();
 
-    panel_ = std::make_unique<ChatPanel>();
-    if (!panel_->Open(dll_, settings_.runtime, windowStateFile_)) {
+    panel_ = std::make_shared<ChatPanel>();
+    if (!panel_->Open(dll_, settings_.runtime, overlayGeometryFile_)) {
         Log("[ChatTranslator] failed to create panel");
         return false;
     }
     panel_->SetComposeCallback([this](const std::wstring& text) {
         OnComposeSubmit(text);
     });
+    overlay_link::Publish(panel_);
     Log("[ChatTranslator] panel created");
+    Log("[ChatTranslator] overlay renders inside the TruckersMP client (no desktop window)");
 
     bool translationOk = StartTranslator();
 
@@ -119,7 +126,11 @@ void AppRuntime::Teardown()
         translator_.reset();
     }
     tailer_.reset();
-    panel_.reset();
+    if (panel_) {
+        overlay_link::Retract(panel_.get());
+        panel_->Close();
+        panel_.reset();
+    }
 }
 
 void AppRuntime::AcceptChat(const ChatEntry& entry)
@@ -372,40 +383,6 @@ bool AppRuntime::WaitForComposeConfirmation(DWORD timeoutMs)
     }) && pendingComposeConfirmed_;
 }
 
-static HWND FindGameWindow(HWND exclude)
-{
-    struct Ctx
-    {
-        DWORD pid;
-        HWND exclude;
-        HWND result;
-        LONG bestArea;
-    };
-    Ctx ctx{ GetCurrentProcessId(), exclude, nullptr, 0 };
-
-    EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-        auto& ctx = *reinterpret_cast<Ctx*>(lParam);
-        if (hwnd == ctx.exclude) return TRUE;
-
-        DWORD wp = 0;
-        GetWindowThreadProcessId(hwnd, &wp);
-        if (wp != ctx.pid) return TRUE;
-        if (!IsWindowVisible(hwnd)) return TRUE;
-        if (GetWindow(hwnd, GW_OWNER) != nullptr) return TRUE;
-
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
-        const LONG area = (rc.right - rc.left) * (rc.bottom - rc.top);
-        if (area > ctx.bestArea) {
-            ctx.bestArea = area;
-            ctx.result = hwnd;
-        }
-        return TRUE;
-    }, reinterpret_cast<LPARAM>(&ctx));
-
-    return ctx.result;
-}
-
 static void PressKey(WORD vk, DWORD holdMs = 25)
 {
     INPUT down = {};
@@ -437,53 +414,6 @@ static void KeyUp(WORD vk)
     input.ki.dwFlags = KEYEVENTF_KEYUP;
     SendInput(1, &input, sizeof(INPUT));
 }
-static bool WaitForForegroundWindow(HWND target, DWORD timeoutMs)
-{
-    const DWORD deadline = GetTickCount() + timeoutMs;
-    for (;;) {
-        if (GetForegroundWindow() == target) return true;
-        if ((LONG)(GetTickCount() - deadline) >= 0) return false;
-        Sleep(8);
-    }
-}
-
-static bool ActivateGameWindow(HWND gameWnd)
-{
-    if (!gameWnd) return false;
-
-    if (IsIconic(gameWnd)) ShowWindow(gameWnd, SW_RESTORE);
-    else ShowWindow(gameWnd, SW_SHOW);
-
-    DWORD currentThread = GetCurrentThreadId();
-    DWORD gameThread = GetWindowThreadProcessId(gameWnd, nullptr);
-    DWORD foregroundThread = GetWindowThreadProcessId(GetForegroundWindow(), nullptr);
-
-    if (foregroundThread && foregroundThread != currentThread) {
-        AttachThreadInput(foregroundThread, currentThread, TRUE);
-    }
-    if (gameThread && gameThread != currentThread) {
-        AttachThreadInput(gameThread, currentThread, TRUE);
-    }
-
-    BringWindowToTop(gameWnd);
-    SetForegroundWindow(gameWnd);
-    SetFocus(gameWnd);
-    SetActiveWindow(gameWnd);
-
-    if (gameThread && gameThread != currentThread) {
-        AttachThreadInput(gameThread, currentThread, FALSE);
-    }
-    if (foregroundThread && foregroundThread != currentThread) {
-        AttachThreadInput(foregroundThread, currentThread, FALSE);
-    }
-
-    if (WaitForForegroundWindow(gameWnd, 250)) return true;
-
-    SetForegroundWindow(gameWnd);
-    BringWindowToTop(gameWnd);
-    return WaitForForegroundWindow(gameWnd, 250);
-}
-
 class ClipboardBackup
 {
 public:
@@ -553,7 +483,7 @@ private:
 static bool SendTextToGameChat(const std::wstring& text, HWND overlay, std::wstring* outTarget)
 {
     if (text.empty()) return false;
-    HWND gameWnd = FindGameWindow(overlay);
+    HWND gameWnd = game_window::Find(overlay);
     if (!gameWnd) return false;
 
     if (outTarget) {
@@ -566,7 +496,7 @@ static bool SendTextToGameChat(const std::wstring& text, HWND overlay, std::wstr
     clipboard.Capture();
     if (!clipboard.Replace(text)) return false;
 
-    if (!ActivateGameWindow(gameWnd)) return false;
+    if (!game_window::Activate(gameWnd)) return false;
 
     PressKey('Y', 18);        // 打开游戏聊天输入框
     Sleep(80);

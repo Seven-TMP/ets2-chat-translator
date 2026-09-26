@@ -3,6 +3,7 @@
 #include <TruckersMP/TruckersMP.hxx>
 
 #include "core_types.h"
+#include "sdk_overlay.h"
 
 #include <memory>
 #include <mutex>
@@ -16,6 +17,8 @@ public:
     bool Start(const TruckersMP_Host* host);
     void Stop();
     bool Available() const { return session_ != nullptr; }
+
+    bool OverlayActive() const { return overlay_ && overlay_->RendererActive(); }
 
     PlayerRole RoleFor(const std::wstring& author) const;
 
@@ -32,6 +35,7 @@ private:
     void RemovePlayer(const TruckersMP::Player& player);
 
     std::unique_ptr<TruckersMP::Session> session_;
+    std::unique_ptr<SdkOverlay> overlay_;
     mutable std::mutex mutex_;
     std::vector<PlayerSnapshot> players_;
     mutable std::unordered_map<std::wstring, PlayerRole> cache_;

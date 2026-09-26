@@ -50,7 +50,7 @@ private:
     std::atomic<bool> alive_{ false };
     std::thread ui_;
 
-    std::unique_ptr<ChatPanel> panel_;
+    std::shared_ptr<ChatPanel> panel_;
     std::unique_ptr<ChatTailer> tailer_;
     std::unique_ptr<TranslateEngine> translator_;
     std::thread composeThread_;
@@ -64,7 +64,7 @@ private:
     AppSettings settings_;
     std::wstring pluginFolder_;
     std::wstring configFile_;
-    std::wstring windowStateFile_;
+    std::wstring overlayGeometryFile_;   // panel position/size inside the game client area
     std::wstring logFolder_;
     FILETIME configWriteTime_{};
     std::mutex translatorLock_;

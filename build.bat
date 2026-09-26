@@ -102,8 +102,10 @@ cl.exe /nologo /EHsc /O2 /std:c++17 /utf-8 /W3 ^
     src\dllmain.cpp src\app_runtime.cpp src\chat_panel.cpp src\chat_tailer.cpp ^
     src\translate_engine.cpp src\http_agent.cpp src\settings_store.cpp ^
     src\text_codec.cpp src\win_paths.cpp src\truckersmp_bridge.cpp ^
+    src\sdk_overlay.cpp src\d3d_overlay.cpp src\game_window.cpp src\overlay_link.cpp ^
     /link /DLL /DEF:exports.def /MACHINE:X64 ^
-    user32.lib gdi32.lib winhttp.lib shell32.lib advapi32.lib shlwapi.lib crypt32.lib
+    user32.lib gdi32.lib winhttp.lib shell32.lib advapi32.lib shlwapi.lib crypt32.lib ^
+    d3d11.lib dxgi.lib d3dcompiler.lib
 
 if %ERRORLEVEL% neq 0 (
     echo [ERROR] Plugin build failed.
@@ -118,7 +120,7 @@ cl.exe /nologo /EHsc /O2 /std:c++17 /utf-8 /W3 ^
     /I "include" /I "src" ^
     /Fe"build\ets2_chat_translator_preview.exe" ^
     /Fo"build\\" ^
-    src\overlay_preview.cpp src\chat_panel.cpp src\text_codec.cpp ^
+    src\overlay_preview.cpp src\chat_panel.cpp src\text_codec.cpp src\game_window.cpp ^
     /link /SUBSYSTEM:WINDOWS /MACHINE:X64 user32.lib gdi32.lib shell32.lib
 
 if %ERRORLEVEL% neq 0 (

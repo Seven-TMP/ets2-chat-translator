@@ -96,11 +96,18 @@ bool TruckersmpBridge::Start(const TruckersMP_Host* host)
         RemovePlayer(event.GetPlayer());
     });
 
+    if (!overlay_) overlay_ = std::make_unique<SdkOverlay>();
+    overlay_->Start(session_.get());
+
     return true;
 }
 
 void TruckersmpBridge::Stop()
 {
+    if (overlay_) {
+        overlay_->Stop(session_.get());
+        overlay_.reset();
+    }
     session_.reset();
     std::lock_guard<std::mutex> guard(mutex_);
     players_.clear();

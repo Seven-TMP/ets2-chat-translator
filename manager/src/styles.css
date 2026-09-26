@@ -697,6 +697,16 @@ button:active:not(:disabled) {
   gap: 8px;
 }
 
+.field-hint {
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.field-hint.warn {
+  color: #fbbf24;
+}
+
 /* ==================== Test Results ==================== */
 .test-result {
   margin-top: 14px;

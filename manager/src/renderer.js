@@ -16,6 +16,7 @@ const els = {
   preset: document.querySelector('#preset'),
   targetLang: document.querySelector('#targetLang'),
   overlayHotkey: document.querySelector('#overlayHotkey'),
+  overlayHotkeyHint: document.querySelector('#overlayHotkeyHint'),
   overlayOpacity: document.querySelector('#overlayOpacity'),
   overlayOpacityValue: document.querySelector('#overlayOpacityValue'),
   workers: document.querySelector('#workers'),
@@ -528,6 +529,7 @@ function applyConfigObject(config, statusText = '') {
   const isOllama = isOllamaPresetValue(presetValue);
   els.targetLang.value = config.target_lang || 'zh-CN';
   els.overlayHotkey.value = config.overlay_hotkey || 'Ctrl+Shift+T';
+  updateHotkeyHint();
   els.workers.value = isOllama ? OLLAMA_DEFAULT_WORKERS : (config.workers ?? 8);
   els.queueLimit.value = config.queue_limit ?? 1000;
   els.cacheLimit.value = config.cache_limit ?? 1500;
@@ -990,6 +992,57 @@ function setOverlayOpacity(value) {
   updatePreview();
 }
 
+/* ==================== Hotkey Hint ==================== */
+// Mirrors ParseHotkey() in src/chat_panel.cpp: a shortcut the plugin cannot parse
+// never reaches RegisterHotKey, so the panel would simply not react to it.
+const HOTKEY_MODIFIERS = new Set(['CTRL', 'CONTROL', 'SHIFT', 'ALT', 'WIN', 'META']);
+const HOTKEY_NAMED_KEYS = new Set([
+  'INSERT', 'INS', 'DELETE', 'DEL', 'HOME', 'END', 'PAGEUP', 'PGUP', 'PAGEDOWN', 'PGDN',
+  'UP', 'DOWN', 'LEFT', 'RIGHT', 'SPACE', 'TAB', 'ESC', 'ESCAPE'
+]);
+
+function hotkeyState(value) {
+  const parts = String(value || '')
+    .split(/[+\s\t-]+/)
+    .map((part) => part.trim().toUpperCase())
+    .filter(Boolean);
+  if (!parts.length) return { key: false, modifiers: 0 };
+  let modifiers = 0;
+  let key = false;
+  for (const part of parts) {
+    if (HOTKEY_MODIFIERS.has(part)) {
+      modifiers += 1;
+      continue;
+    }
+    if (/^[A-Z0-9]$/.test(part) || /^F([1-9]|1[0-9]|2[0-4])$/.test(part) || HOTKEY_NAMED_KEYS.has(part)) {
+      key = true;
+    }
+  }
+  return { key, modifiers };
+}
+
+function updateHotkeyHint() {
+  if (!els.overlayHotkeyHint) return;
+  const value = els.overlayHotkey.value.trim();
+  if (!value) {
+    els.overlayHotkeyHint.classList.remove('warn');
+    els.overlayHotkeyHint.textContent = '默认 Ctrl+Shift+T：游戏里按它显示 / 隐藏悬浮窗。';
+    return;
+  }
+  const state = hotkeyState(value);
+  if (!state.key) {
+    els.overlayHotkeyHint.classList.add('warn');
+    els.overlayHotkeyHint.textContent =
+      `“${value}” 无法识别，插件不会注册这个快捷键。请写成 F9、Ctrl+Shift+T、Alt+1 这类形式。`;
+    return;
+  }
+  els.overlayHotkeyHint.classList.toggle('warn', state.modifiers === 0);
+  const conflict = state.modifiers === 0 ? '（未加 Ctrl / Shift / Alt，可能与游戏按键冲突）' : '';
+  els.overlayHotkeyHint.textContent =
+    `游戏里按 ${value} 显示 / 隐藏悬浮窗${conflict}；悬浮窗状态栏会显示「快捷键 ${value}」，` +
+    '右上角 ✕ 可临时关闭（再按快捷键恢复），右下角斜纹可拖动缩放面板。';
+}
+
 els.fontSizeMinus.addEventListener('click', () => {
   setFontSize(numberValue(els.fontSize, 18) - 2);
 });
@@ -1001,6 +1054,8 @@ els.fontSizePlus.addEventListener('click', () => {
 els.overlayOpacity.addEventListener('input', () => {
   setOverlayOpacity(els.overlayOpacity.value);
 });
+
+els.overlayHotkey.addEventListener('input', updateHotkeyHint);
 
 document.querySelectorAll('.preset-btn').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -1035,6 +1090,7 @@ if (copyPreviewBtn) {
   await refreshPresets();
   setFontSize(numberValue(els.fontSize, 18));
   setOverlayOpacity(numberValue(els.overlayOpacity, 98));
+  updateHotkeyHint();
   applyPresetDefaults(true);
   await refreshState();
   await loadInstalledConfig(true);

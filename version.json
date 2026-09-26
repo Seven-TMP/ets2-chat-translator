@@ -1,11 +1,11 @@
 {
-  "version": "0.3.19",
-  "tag_name": "v0.3.19",
-  "name": "v0.3.19",
-  "download_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/download/v0.3.19/ETS2-Chat-Translator-Manager-Setup-0.3.19.exe",
-  "asset_name": "ETS2-Chat-Translator-Manager-Setup-0.3.19.exe",
-  "size": 82853246,
-  "sha256": "d5fee76881ec25e659b5c3b6fe5d5fee524f61f636ed7e7156116183c46b3270",
-  "html_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/tag/v0.3.19",
-  "notes": "### v0.3.19\n\n- 适配欧卡 1.61：补齐 SCS Telemetry SDK 版本定义（1.00~1.14），版本协商改为按主版本匹配，游戏更新后插件可正常加载。\n- 接入 TruckersMP 官方 Client SDK：同一个 DLL 同时实现 SCS Telemetry 与 TruckersMP SDK 接口，可读取附近玩家身份。\n- 新增身份标注：聊天中为管理员、团队成员、赞助者显示 ADMIN / GM / TEAM / VIP 徽章，兼容 [TAG] 前缀与大小写、空格差异。\n- 修复发送消息定位错误：此前按键会打到悬浮窗自身导致“发送超时”，现在排除悬浮窗并定位游戏主窗口，同时记录实际发送目标窗口。\n- 修复悬浮窗闪烁：渲染统一转交 UI 线程并合并重绘请求、复用位图缓存，字体改为灰度抗锯齿。\n- 优化中译英发送：不再隐藏/重显悬浮窗，改为轮询等待游戏窗口激活，剪贴板自动还原，结果提示 6 秒后自动消失。\n- UI 调整：连接/服务信息不再使用刺眼的红色卡片，状态栏精简。"
+  "version": "0.3.20",
+  "tag_name": "v0.3.20",
+  "name": "v0.3.20",
+  "download_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/download/v0.3.20/ETS2-Chat-Translator-Manager-Setup-0.3.20.exe",
+  "asset_name": "ETS2-Chat-Translator-Manager-Setup-0.3.20.exe",
+  "size": 82876191,
+  "sha256": "6d2e00396fabec0f27ab62152ef838461c2cf8d6aab76406cb4a00733f441ecd",
+  "html_url": "https://github.com/Seven-TMP/ets2-chat-translator/releases/tag/v0.3.20",
+  "notes": "### v0.3.20\n\n- 移除桌面悬浮窗：插件不再创建任何桌面窗口，悬浮窗只在 TruckersMP 客户端内由 DirectX 11 渲染层合成，避免与游戏画面不同步、误触和他程序遮挡。\n- 游戏内鼠标交互：面板显示时由客户端提供光标，可直接在游戏画面里点搜索框、输入框，拖动标题栏移动、右下角缩放，位置与尺寸依旧自动保存并沿用上次的值。\n- 配置精简：移除 overlay_mode（自动 / 游戏内 / 桌面）设置项与管理器下拉框，管理器与默认配置模板同步更新。\n- 预览工具重构：管理器“预览悬浮窗”按钮改为独立预览宿主窗口，按游戏内的渲染与输入路径合成位图，无需进入游戏即可检查排版、搜索与拖拽缩放。\n- 修复游戏内搜索框点不动：搜索框位于标题栏内，点击会被“拖动窗口”逻辑吞掉，现在点击优先级调整为「缩放角 → 关闭按钮 → 搜索框 / 输入框 → 标题栏拖动」。\n- 修复关闭按钮无效：点击 ✕ 后客户端仍会重绘最后一帧，导致面板看着还在、却不再响应点击；现在隐藏时会丢弃已发布的位图并让客户端停止绘制，再按快捷键即可唤回。\n- 缩放手柄可视化：面板右下角新增三道斜纹缩放手柄（与命中区域完全一致），鼠标悬停与拖动时高亮，明确提示可以放大 / 缩小面板；关闭按钮同样增加悬停高亮。\n- 快捷键提示：状态栏右侧新增「快捷键 F9」胶囊，直接显示 overlay_hotkey 当前生效的按键；管理器快捷键输入框下方同步显示“游戏里按它显示 / 隐藏悬浮窗”的说明，并在格式无法识别时给出警告提示。\n- 支持单键快捷键：overlay_hotkey 不再强制要求修饰键，F9 这类单键也能注册生效。\n- 修复影响正常游戏操作与 TMP 鼠标换出：面板显示时不再无条件占用客户端光标引用（此前会导致光标一直显示、TruckersMP 的 Tab 换鼠标失效）；现在只在搜索框 / 输入框获焦或拖动、缩放期间临时接管，按 Tab / Esc、点击面板外的游戏画面或隐藏面板都会立刻归还鼠标与键盘。\n- 锁定光标不再误触：游戏自己占用指针时（正常开车），面板会忽略指针坐标——不再出现悬停高亮乱跳、拖动跟随锁定光标、误点 ✕、吞掉游戏点击或滚轮变焦；状态栏改为提示「Tab 换出鼠标可点击面板」，按 TruckersMP 的 Tab 换出鼠标后即可正常操作面板。\n- 鼠标按下 / 抬起配对：被面板吞掉的按下会连同它的抬起一起吞掉，避免游戏收到“只有抬起没有按下”而卡住操作。"
 }

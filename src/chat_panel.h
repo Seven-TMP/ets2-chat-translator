@@ -1,6 +1,7 @@
 #pragma once
 
 #include "core_types.h"
+#include "overlay_host.h"
 
 #include <atomic>
 #include <functional>
@@ -11,18 +12,37 @@
 #include <windows.h>
 #include <imm.h>
 
-class ChatPanel
+class ChatPanel : public OverlayHost
 {
 public:
     ChatPanel();
     ~ChatPanel();
 
-    bool Open(HINSTANCE instance, const RuntimeConfig& runtime, const std::wstring& windowStatePath = L"");
+    bool Open(HINSTANCE instance, const RuntimeConfig& runtime, const std::wstring& overlayGeometryPath = L"");
     void Close();
     void MessageLoop();
     void ApplyRuntime(const RuntimeConfig& runtime);
     bool SetOverlayHotkey(const std::wstring& hotkey);
     void SetCloseButtonExits(bool value) { closeButtonExits_ = value; }
+
+    bool OverlayGameSurfaceActive() const override;
+    void OverlayUseGameSurface(HWND gameWindow) override;
+    void OverlayReleaseGameSurface() override;
+    bool OverlayVisible() const override;
+    HWND OverlayWindowHandle() const override { return hwnd_; }
+    void OverlaySetViewport(int width, int height) override;
+    bool OverlayHitTest(int x, int y) const override;
+    void OverlayMouseMove(int x, int y) override;
+    void OverlayMouseButton(int button, bool down, int x, int y) override;
+    void OverlayMouseWheel(int delta, int x, int y) override;
+    bool OverlayWantsTextInput() const override;
+    bool OverlayOwnsKeyboard() const override;
+    void OverlayKeyDown(int virtualKey) override;
+    void OverlayCharacter(unsigned int codepoint) override;
+    void OverlaySetGameInputLocked(bool locked) override;
+    bool OverlayWantsCursor() const override;
+    void OverlaySetGameCursorVisible(bool available) override;
+    bool OverlayAcquireFrame(OverlayFrame& out) const override;
 
     using ComposeCallback = std::function<void(const std::wstring& text)>;
 
@@ -31,7 +51,7 @@ public:
     void Status(const std::wstring& text);
     void ToggleVisible();
     HWND Window() const { return hwnd_; }
-    bool IsVisible() const { return hwnd_ && IsWindowVisible(hwnd_) != FALSE; }
+    bool IsVisible() const;
     void SetComposeCallback(ComposeCallback cb) { composeCallback_ = std::move(cb); }
     void SetComposeStatus(const std::wstring& text);
     void PostComposeStatus(std::wstring text);
@@ -40,9 +60,11 @@ private:
     static LRESULT CALLBACK WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp);
 
     void Paint(HDC dc, RECT bounds);
-    void RenderLayered();
+    void RenderPanel();
     void RequestRender();
     void ReleaseRenderCache();
+    void PublishFrame(int width, int height);
+    void PublishFramePosition();
     void LayoutSearchBox(RECT bounds);
     void LayoutComposeBox(RECT bounds);
     void SetSearchText(std::wstring text);
@@ -62,7 +84,20 @@ private:
     void ResizeScroll();
     void OnWheel(int delta);
     void OnClick(int x, int y);
-    void SaveWindowState() const;
+    void SaveOverlayGeometry() const;
+
+    void ActivateGameSurface(HWND gameWindow);
+    void DeactivateGameSurface();
+    void ClampGameRect();
+    void SetGameVisible(bool visible);
+    void SetGameCursorAvailable(bool available);
+    void SyncPointerBusy();
+    bool PointerUsable() const;
+    void HandleOverlayMouseMove(int x, int y);
+    void HandleOverlayMouseButton(int button, bool down, int x, int y);
+    void EnsureImeHost();
+    void ReleaseImeHost();
+    void FocusGameWindow();
 
     HWND hwnd_ = nullptr;
     HINSTANCE instance_ = nullptr;
@@ -104,8 +139,51 @@ private:
     bool searchFocused_ = false;
     bool searchCaretVisible_ = false;
     std::wstring overlayHotkey_ = L"Ctrl+Shift+T";
-    std::wstring windowStatePath_;
+    std::wstring overlayGeometryPath_;
     RECT searchBoxRect_{};
+
+    std::atomic<bool> gameSurfaceActive_{ false };
+    std::atomic<bool> gameVisible_{ true };
+    std::atomic<int> viewportWidth_{ 0 };
+    std::atomic<int> viewportHeight_{ 0 };
+    HWND gameWindow_ = nullptr;
+    int gameX_ = 0;
+    int gameY_ = 0;
+    bool imeHostActive_ = false;
+    bool dragActive_ = false;
+    bool resizeActive_ = false;
+    bool gripHot_ = false;
+    bool closeHot_ = false;
+    int dragLastX_ = 0;
+    int dragLastY_ = 0;
+
+    mutable std::mutex frameLock_;
+    std::shared_ptr<const std::vector<std::uint32_t>> framePixels_;
+    int frameWidth_ = 0;
+    int frameHeight_ = 0;
+    int frameX_ = 0;
+    int frameY_ = 0;
+    std::uint64_t frameRevision_ = 0;
+
+    std::atomic<int> pendingMouseX_{ 0 };
+    std::atomic<int> pendingMouseY_{ 0 };
+    std::atomic<bool> mouseMovePosted_{ false };
+    struct OverlayButtonEvent
+    {
+        int button = 0;
+        bool down = false;
+        int x = 0;
+        int y = 0;
+    };
+    mutable std::mutex buttonLock_;
+    std::vector<OverlayButtonEvent> pendingButtons_;
+    std::atomic<bool> buttonPosted_{ false };
+    std::atomic<bool> textInputWanted_{ false };
+    std::atomic<bool> pointerBusy_{ false };
+    std::atomic<bool> pendingCursorAvailable_{ false };
+    std::atomic<bool> cursorStatePosted_{ false };
+    std::atomic<bool> gameCursorAvailable_{ false };
+    std::atomic<bool> cursorStateKnown_{ false };
 
     ComposeCallback composeCallback_;
     std::wstring composeInputText_;

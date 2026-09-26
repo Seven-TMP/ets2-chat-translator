@@ -19,6 +19,10 @@ set(PLUGIN_SOURCES
     src/text_codec.cpp
     src/win_paths.cpp
     src/truckersmp_bridge.cpp
+    src/sdk_overlay.cpp
+    src/d3d_overlay.cpp
+    src/game_window.cpp
+    src/overlay_link.cpp
 )
 
 set(PLUGIN_HEADERS
@@ -33,6 +37,11 @@ set(PLUGIN_HEADERS
     src/text_codec.h
     src/win_paths.h
     src/truckersmp_bridge.h
+    src/sdk_overlay.h
+    src/d3d_overlay.h
+    src/game_window.h
+    src/overlay_host.h
+    src/overlay_link.h
 )
 
 add_library(${PROJECT_NAME} SHARED ${PLUGIN_SOURCES} ${PLUGIN_HEADERS} exports.def)
@@ -51,6 +60,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     shlwapi
     crypt32
     imm32
+    d3d11
+    dxgi
+    d3dcompiler
 )
 
 set_target_properties(${PROJECT_NAME} PROPERTIES

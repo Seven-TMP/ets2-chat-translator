@@ -1,4 +1,5 @@
 #include "chat_panel.h"
+#include "game_window.h"
 #include "text_codec.h"
 
 #include <algorithm>
@@ -6,6 +7,7 @@
 #include <cwctype>
 #include <cstdint>
 #include <fstream>
+#include <memory>
 #include <sstream>
 #include <windowsx.h>
 
@@ -30,7 +32,54 @@ const COLORREF cCyan = RGB(34, 211, 238);
 constexpr int kTimeColumnW = 58;
 constexpr UINT kMsgComposeStatus = WM_APP + 5;
 constexpr UINT kMsgRender = WM_APP + 6;
+constexpr UINT kMsgOverlayUseSurface = WM_APP + 7;
+constexpr UINT kMsgOverlayReleaseSurface = WM_APP + 8;
+constexpr UINT kMsgOverlayMouseMove = WM_APP + 9;
+constexpr UINT kMsgOverlayMouseButton = WM_APP + 10;
+constexpr UINT kMsgOverlayMouseWheel = WM_APP + 11;
+constexpr UINT kMsgOverlayKey = WM_APP + 12;
+constexpr UINT kMsgOverlayChar = WM_APP + 13;
+constexpr UINT kMsgOverlayViewport = WM_APP + 14;
+constexpr UINT kMsgOverlayCursorState = WM_APP + 15;
 constexpr UINT_PTR kComposeStatusTimerId = 2;
+// Bottom-right box that both highlights and grabs the resize grip; the drawn hatch
+// stays inside it so the hint and the hit test never disagree.
+constexpr int kGameCornerGrip = 20;
+constexpr int kGripLineCount = 3;
+constexpr int kGripLineGap = 5;
+constexpr int kGripLineFirstInset = 5;
+
+// The close button is drawn and hit-tested through this single rect.
+RECT CloseButtonRect(int clientWidth, int bandHeight)
+{
+    const int bottom = (std::max)(12, bandHeight - 10);
+    return RECT{ clientWidth - 42, 10, clientWidth - 14, bottom };
+}
+
+RECT ResizeGripRect(int clientWidth, int clientHeight)
+{
+    return RECT{ clientWidth - kGameCornerGrip, clientHeight - kGameCornerGrip,
+        clientWidth, clientHeight };
+}
+
+bool PointInRect(const RECT& rect, int x, int y)
+{
+    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+// Three diagonal strokes in the corner: the visible "drag me to scale" hint.
+void DrawResizeGrip(HDC dc, int clientWidth, int clientHeight, COLORREF color)
+{
+    HPEN pen = CreatePen(PS_SOLID, 2, color);
+    HGDIOBJ oldPen = SelectObject(dc, pen);
+    for (int i = 0; i < kGripLineCount; ++i) {
+        const int inset = kGripLineFirstInset + i * kGripLineGap;
+        MoveToEx(dc, clientWidth - 4 - inset, clientHeight - 4, nullptr);
+        LineTo(dc, clientWidth - 4, clientHeight - 4 - inset);
+    }
+    SelectObject(dc, oldPen);
+    DeleteObject(pen);
+}
 
 struct RoleStyle
 {
@@ -105,7 +154,7 @@ RECT ClampWindowRect(RECT rect)
     return RECT{ x, y, x + w, y + h };
 }
 
-RECT DefaultWindowRect()
+RECT DefaultOverlayRect()
 {
     int w = 600;
     int h = 540;
@@ -116,9 +165,9 @@ RECT DefaultWindowRect()
     return ClampWindowRect(RECT{ x, y, x + w, y + h });
 }
 
-RECT LoadWindowRect(const std::wstring& path)
+RECT LoadOverlayRect(const std::wstring& path)
 {
-    RECT fallback = DefaultWindowRect();
+    RECT fallback = DefaultOverlayRect();
     if (path.empty()) return fallback;
     std::ifstream f(path, std::ios::binary);
     if (!f) return fallback;
@@ -161,7 +210,7 @@ void RoundFill(HDC dc, RECT r, int radius, COLORREF color)
     DeleteObject(brush);
 }
 
-void PrepareLayeredBitmap(HBITMAP bmp, int width, int height, BYTE backgroundAlpha)
+void PrepareOverlayBitmap(HBITMAP bmp, int width, int height, BYTE backgroundAlpha)
 {
     BITMAP bitmap{};
     if (!GetObjectW(bmp, sizeof(bitmap), &bitmap) || !bitmap.bmBits) return;
@@ -186,7 +235,7 @@ void PrepareLayeredBitmap(HBITMAP bmp, int width, int height, BYTE backgroundAlp
     }
 }
 
-HBITMAP CreateLayerBitmap(HDC dc, int width, int height, void** bits)
+HBITMAP CreateOverlayBitmap(HDC dc, int width, int height, void** bits)
 {
     BITMAPINFO info{};
     info.bmiHeader.biSize = sizeof(info.bmiHeader);
@@ -283,7 +332,9 @@ bool ParseHotkey(const std::wstring& hotkey, UINT& modifiers, UINT& vk)
         else return false;
     }
 
-    return modifiers != 0 && vk != 0;
+    // A bare key such as "F9" is allowed on purpose (RegisterHotKey handles it and
+    // MOD_NOREPEAT suppresses repeats); modifiers are optional, only the key counts.
+    return vk != 0;
 }
 
 int TextWidth(HDC dc, HFONT font, const std::wstring& text)
@@ -393,11 +444,11 @@ ChatPanel::~ChatPanel()
     Close();
 }
 
-bool ChatPanel::Open(HINSTANCE instance, const RuntimeConfig& runtime, const std::wstring& windowStatePath)
+bool ChatPanel::Open(HINSTANCE instance, const RuntimeConfig& runtime, const std::wstring& overlayGeometryPath)
 {
     instance_ = instance;
     uiThreadId_ = GetCurrentThreadId();
-    windowStatePath_ = windowStatePath;
+    overlayGeometryPath_ = overlayGeometryPath;
 
     WNDCLASSEXW wc{};
     wc.cbSize = sizeof(wc);
@@ -411,20 +462,17 @@ bool ChatPanel::Open(HINSTANCE instance, const RuntimeConfig& runtime, const std
 
     ApplyRuntime(runtime);
 
-    RECT startRect = LoadWindowRect(windowStatePath_);
+    RECT startRect = LoadOverlayRect(overlayGeometryPath_);
     int w = startRect.right - startRect.left;
     int h = startRect.bottom - startRect.top;
 
-    hwnd_ = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+    hwnd_ = CreateWindowExW(WS_EX_TOOLWINDOW,
         kClass, L"ETS2 Chat Translator", WS_POPUP,
         startRect.left, startRect.top, w, h, nullptr, nullptr, instance_, this);
     if (!hwnd_) return false;
 
     overlayOpacity_ = (std::max)(0, (std::min)(100, runtime.overlayOpacity));
     SetOverlayHotkey(runtime.overlayHotkey);
-
-    ShowWindow(hwnd_, SW_SHOW);
-    RenderLayered();
     return true;
 }
 
@@ -474,13 +522,26 @@ void ChatPanel::ApplyRuntime(const RuntimeConfig& runtime)
 void ChatPanel::Close()
 {
     if (hwnd_) {
-        SaveWindowState();
+        SaveOverlayGeometry();
         if (hotkeyRegistered_) {
             UnregisterHotKey(hwnd_, hotkeyId_);
             hotkeyRegistered_ = false;
         }
         DestroyWindow(hwnd_);
         hwnd_ = nullptr;
+    }
+    gameSurfaceActive_.store(false);
+    gameVisible_.store(false);
+    imeHostActive_ = false;
+    textInputWanted_.store(false);
+    {
+        std::lock_guard<std::mutex> guard(frameLock_);
+        framePixels_.reset();
+        frameWidth_ = 0;
+        frameHeight_ = 0;
+        frameX_ = 0;
+        frameY_ = 0;
+        frameRevision_ = 0;
     }
     ReleaseRenderCache();
     if (font_) DeleteObject(font_);
@@ -561,27 +622,25 @@ void ChatPanel::Status(const std::wstring& text)
     RequestRender();
 }
 
-void ChatPanel::ToggleVisible()
+bool ChatPanel::IsVisible() const
 {
-    if (!hwnd_) return;
-    if (IsWindowVisible(hwnd_)) {
-        ShowWindow(hwnd_, SW_HIDE);
-        return;
-    }
-
-    ShowWindow(hwnd_, SW_SHOWNA);
-    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
-    RequestRender();
+    return gameSurfaceActive_.load() && gameVisible_.load();
 }
 
-void ChatPanel::SaveWindowState() const
+void ChatPanel::ToggleVisible()
 {
-    if (!hwnd_ || windowStatePath_.empty()) return;
-    RECT rect{};
-    if (!GetWindowRect(hwnd_, &rect)) return;
-    rect = ClampWindowRect(rect);
-    std::ofstream f(windowStatePath_, std::ios::binary);
+    if (!hwnd_ || !gameSurfaceActive_.load()) return;
+    SetGameVisible(!gameVisible_.load());
+}
+
+void ChatPanel::SaveOverlayGeometry() const
+{
+    if (!hwnd_ || overlayGeometryPath_.empty() || !gameSurfaceActive_.load()) return;
+
+    RECT client{};
+    if (!GetClientRect(hwnd_, &client)) return;
+    RECT rect{ gameX_, gameY_, gameX_ + (client.right - client.left), gameY_ + (client.bottom - client.top) };
+    std::ofstream f(overlayGeometryPath_, std::ios::binary);
     if (!f) return;
     f << "{\n"
       << "  \"x\": " << rect.left << ",\n"
@@ -618,40 +677,24 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
     }
 
     case WM_PAINT: {
+        // Only reachable while the window is the off-screen IME host (or briefly by
+        // the DWM); the panel itself is drawn by the client.
         PAINTSTRUCT ps{};
         BeginPaint(hwnd, &ps);
         EndPaint(hwnd, &ps);
         self->RequestRender();
         return 0;
     }
-    case WM_NCHITTEST: {
-        POINT p{ GET_X_LPARAM(lp), GET_Y_LPARAM(lp) };
-        ScreenToClient(hwnd, &p);
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
-        if (p.y >= rc.bottom - 12 && p.x >= rc.right - 12) return HTBOTTOMRIGHT;
-        if (p.y >= rc.bottom - 8) return HTBOTTOM;
-        if (p.x >= rc.right - 8) return HTRIGHT;
-        if (self->SearchBoxHit(p.x, p.y)) return HTCLIENT;
-        if (p.y < self->topBand_ && p.x < rc.right - 40) return HTCAPTION;
-        return HTCLIENT;
-    }
     case WM_SIZE: {
         self->ResizeScroll();
         int cx = LOWORD(lp);
         int cy = HIWORD(lp);
-        HRGN rgn = CreateRoundRectRgn(0, 0, cx, cy, 16, 16);
-        // bRedraw 传 FALSE：统一交给下面的 RequestRender，避免一次 resize 触发两轮重绘。
-        SetWindowRgn(hwnd, rgn, FALSE);
         RECT rc{ 0, 0, cx, cy };
         self->LayoutSearchBox(rc);
         self->LayoutComposeBox(rc);
         self->RequestRender();
         return 0;
     }
-    case WM_EXITSIZEMOVE:
-        self->SaveWindowState();
-        return 0;
     case WM_CHAR:
     case WM_KEYDOWN:
         if (self->HandleSearchKey(msg, wp)) return 0;
@@ -663,17 +706,17 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         self->RequestRender();
         return 0;
     case WM_KILLFOCUS:
-        self->SetSearchFocus(false);
-        self->SetComposeFocus(false);
-        return 0;
-    case WM_MOUSEWHEEL:
-        self->OnWheel(GET_WHEEL_DELTA_WPARAM(wp));
+        // While the client hosts the panel the caret may stay in a text field even
+        // though the real window focus is on the game again: keys reach the panel
+        // through the client's keyboard lock (OverlayKeyDown / OverlayCharacter), so
+        // losing window focus must not drop the field.
+        if (!self->gameSurfaceActive_.load()) {
+            self->SetSearchFocus(false);
+            self->SetComposeFocus(false);
+        }
         return 0;
     case WM_HOTKEY:
         if ((int)wp == self->hotkeyId_) self->ToggleVisible();
-        return 0;
-    case WM_LBUTTONDOWN:
-        self->OnClick(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
         return 0;
     case WM_IME_STARTCOMPOSITION:
         if (self->composeFocused_) return self->HandleImeStartComposition();
@@ -703,7 +746,7 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         break;
     case kMsgRender:
         self->renderPosted_.store(false);
-        self->RenderLayered();
+        self->RenderPanel();
         return 0;
     case WM_APP + 1:
         self->ScrollToEnd();
@@ -728,6 +771,51 @@ LRESULT CALLBACK ChatPanel::WindowProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp
         }
         return 0;
     }
+    case kMsgOverlayUseSurface:
+        self->ActivateGameSurface(reinterpret_cast<HWND>(wp));
+        return 0;
+    case kMsgOverlayReleaseSurface:
+        self->DeactivateGameSurface();
+        return 0;
+    case kMsgOverlayMouseMove:
+        self->mouseMovePosted_.store(false);
+        self->HandleOverlayMouseMove(self->pendingMouseX_.load(), self->pendingMouseY_.load());
+        return 0;
+    case kMsgOverlayMouseButton: {
+        self->buttonPosted_.store(false);
+        std::vector<ChatPanel::OverlayButtonEvent> events;
+        {
+            std::lock_guard<std::mutex> guard(self->buttonLock_);
+            events.swap(self->pendingButtons_);
+        }
+        for (const auto& event : events) {
+            self->HandleOverlayMouseButton(event.button, event.down, event.x, event.y);
+        }
+        return 0;
+    }
+    case kMsgOverlayMouseWheel:
+        if (self->PointerUsable()) self->OnWheel((int)(INT_PTR)wp);
+        return 0;
+    case kMsgOverlayKey:
+        if ((int)wp == VK_TAB) {
+            self->SetSearchFocus(false);
+            self->SetComposeFocus(false);
+            return 0;
+        }
+        self->HandleSearchKey(WM_KEYDOWN, wp);
+        self->HandleComposeKey(WM_KEYDOWN, wp);
+        return 0;
+    case kMsgOverlayChar:
+        self->HandleSearchKey(WM_CHAR, wp);
+        self->HandleComposeKey(WM_CHAR, wp);
+        return 0;
+    case kMsgOverlayCursorState:
+        self->cursorStatePosted_.store(false);
+        self->SetGameCursorAvailable(self->pendingCursorAvailable_.load());
+        return 0;
+    case kMsgOverlayViewport:
+        self->ClampGameRect();
+        return 0;
     case WM_ERASEBKGND:
         return 1;
     case WM_CLOSE:
@@ -785,7 +873,7 @@ void ChatPanel::DrainPending()
     }
 }
 
-void ChatPanel::RenderLayered()
+void ChatPanel::RenderPanel()
 {
     if (!hwnd_) return;
 
@@ -793,6 +881,8 @@ void ChatPanel::RenderLayered()
         RequestRender();
         return;
     }
+
+    if (!gameSurfaceActive_.load() || !gameVisible_.load()) return;
 
     RECT rc{};
     if (!GetClientRect(hwnd_, &rc)) return;
@@ -805,7 +895,7 @@ void ChatPanel::RenderLayered()
     if (!cacheDc_ || !cacheBmp_ || cacheWidth_ != width || cacheHeight_ != height) {
         ReleaseRenderCache();
         void* bits = nullptr;
-        cacheBmp_ = CreateLayerBitmap(screen, width, height, &bits);
+        cacheBmp_ = CreateOverlayBitmap(screen, width, height, &bits);
         cacheDc_ = CreateCompatibleDC(screen);
         if (!cacheBmp_ || !cacheDc_ || !bits) {
             ReleaseRenderCache();
@@ -818,26 +908,55 @@ void ChatPanel::RenderLayered()
     }
 
     Paint(cacheDc_, RECT{ 0, 0, width, height });
-    PrepareLayeredBitmap(cacheBmp_, width, height, BackgroundAlpha(overlayOpacity_));
-
-    POINT src{ 0, 0 };
-    POINT pos{};
-    RECT wr{};
-    GetWindowRect(hwnd_, &wr);
-    pos.x = wr.left;
-    pos.y = wr.top;
-    SIZE size{ width, height };
-    BLENDFUNCTION blend{ AC_SRC_OVER, 0, 255, AC_SRC_ALPHA };
-    UpdateLayeredWindow(hwnd_, screen, &pos, &size, cacheDc_, &src, 0, &blend, ULW_ALPHA);
+    PrepareOverlayBitmap(cacheBmp_, width, height, BackgroundAlpha(overlayOpacity_));
+    PublishFrame(width, height);
 
     ReleaseDC(nullptr, screen);
+}
+
+void ChatPanel::PublishFrame(int width, int height)
+{
+    if (!cacheBmp_ || width <= 0 || height <= 0) return;
+
+    BITMAP bitmap{};
+    if (!GetObjectW(cacheBmp_, sizeof(bitmap), &bitmap) || !bitmap.bmBits) return;
+    if (bitmap.bmWidth < width || bitmap.bmHeight < height) return;
+
+    auto pixels = std::make_shared<std::vector<std::uint32_t>>();
+    try {
+        pixels->resize((size_t)width * (size_t)height);
+    } catch (...) {
+        return;
+    }
+
+    const auto* source = static_cast<const std::uint8_t*>(bitmap.bmBits);
+    const int stride = bitmap.bmWidthBytes;
+    std::uint32_t* target = pixels->data();
+    for (int y = 0; y < height; ++y) {
+        memcpy(target + (size_t)y * width, source + (size_t)y * stride, (size_t)width * sizeof(std::uint32_t));
+    }
+
+    std::lock_guard<std::mutex> guard(frameLock_);
+    framePixels_ = std::shared_ptr<const std::vector<std::uint32_t>>(std::move(pixels));
+    frameWidth_ = width;
+    frameHeight_ = height;
+    frameX_ = gameX_;
+    frameY_ = gameY_;
+    ++frameRevision_;
+}
+
+void ChatPanel::PublishFramePosition()
+{
+    std::lock_guard<std::mutex> guard(frameLock_);
+    frameX_ = gameX_;
+    frameY_ = gameY_;
 }
 
 void ChatPanel::RequestRender()
 {
     if (!hwnd_) return;
     if (uiThreadId_ != 0 && GetCurrentThreadId() == uiThreadId_) {
-        RenderLayered();
+        RenderPanel();
         return;
     }
     if (renderPosted_.exchange(true)) return;
@@ -903,6 +1022,11 @@ void ChatPanel::Paint(HDC dc, RECT bounds)
         if (value.empty()) {
             DrawTextLine(dc, smallFont_, RGB(105, 118, 138), L"搜索", inputText,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+            if (focused && caret) {
+                RECT cursor{ inputText.left - 3, inputText.top + 6,
+                    inputText.left - 2, inputText.bottom - 6 };
+                Fill(dc, cursor, cCyan);
+            }
         } else {
             DrawTextLine(dc, smallFont_, cText, value, inputText,
                 DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
@@ -919,9 +1043,10 @@ void ChatPanel::Paint(HDC dc, RECT bounds)
     RoundFill(dc, tag, 12, RGB(22, 42, 62));
     DrawTextLine(dc, smallFont_, cCyan, L"LIVE", tag, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
-    RECT close{ bounds.right - 42, 10, bounds.right - 14, topBand_ - 10 };
-    RoundFill(dc, close, 8, RGB(35, 42, 56));
-    DrawTextLine(dc, titleFont_, RGB(175, 185, 200), L"\x2715", close, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    const RECT close = CloseButtonRect((int)bounds.right, topBand_);
+    RoundFill(dc, close, 8, closeHot_ ? RGB(62, 38, 46) : RGB(35, 42, 56));
+    DrawTextLine(dc, titleFont_, closeHot_ ? cWarn : RGB(175, 185, 200), L"\x2715", close,
+        DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
     std::wstring status;
     {
@@ -937,6 +1062,38 @@ void ChatPanel::Paint(HDC dc, RECT bounds)
     RECT dot{ statusBox.left + 12, statusBox.top + 10, statusBox.left + 20, statusBox.top + 18 };
     RoundFill(dc, dot, 8, RGB(16, 185, 129));
     RECT statusText{ statusBox.left + 28, statusBox.top, statusBox.right - 12, statusBox.bottom };
+
+    std::wstring hotkey;
+    {
+        std::lock_guard<std::mutex> guard(lock_);
+        hotkey = overlayHotkey_;
+    }
+
+    int chipRight = statusBox.right - 12;
+    auto DrawChip = [&](const std::wstring& label, COLORREF textColor, COLORREF fillColor,
+                        COLORREF edgeColor) {
+        const int room = chipRight - statusText.left - 60;   // keep the status text usable
+        if (label.empty() || room < 60) return;
+        const int labelWidth = TextWidth(dc, smallFont_, label);
+        if (labelWidth <= 0 || labelWidth + 12 > room) return;
+        RECT chip{ chipRight - (labelWidth + 16), statusBox.top + 2, chipRight, statusBox.bottom - 2 };
+        RoundFill(dc, chip, 8, fillColor);
+        StrokeRound(dc, chip, 8, edgeColor);
+        DrawTextLine(dc, smallFont_, textColor, label, chip,
+            DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        chipRight = chip.left - 6;
+        statusText.right = (std::max)((int)statusText.left + 40, chipRight - 2);
+    };
+
+    if (statusBox.right - statusBox.left > 240) {
+        if (!hotkey.empty()) {
+            DrawChip(L"快捷键 " + hotkey, cCyan, RGB(30, 38, 52), RGB(58, 70, 92));
+        }
+        if (cursorStateKnown_.load() && !gameCursorAvailable_.load()) {
+            DrawChip(L"Tab 换出鼠标可点击面板", RGB(251, 191, 36), RGB(46, 38, 24), RGB(120, 88, 34));
+        }
+    }
+
     DrawTextLine(dc, smallFont_, cDim, CompactStatus(status), statusText, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     bool hasComposeBox = composeBoxRect_.right > composeBoxRect_.left && composeBoxRect_.bottom > composeBoxRect_.top;
@@ -1113,6 +1270,9 @@ void ChatPanel::Paint(HDC dc, RECT bounds)
         RoundFill(dc, thumb, 4, RGB(92, 110, 140));
     }
 
+    DrawResizeGrip(dc, (int)bounds.right, (int)bounds.bottom,
+        resizeActive_ ? cCyan : (gripHot_ ? RGB(150, 165, 192) : RGB(88, 102, 128)));
+
 }
 
 void ChatPanel::UpdateContentWidth(int clientWidth)
@@ -1185,13 +1345,19 @@ void ChatPanel::SetSearchText(std::wstring text)
 void ChatPanel::SetSearchFocus(bool focused)
 {
     bool changed = false;
+    bool anyFocused = false;
     {
         std::lock_guard<std::mutex> guard(lock_);
         changed = searchFocused_ != focused || searchCaretVisible_ != focused;
         searchFocused_ = focused;
         searchCaretVisible_ = focused;
+        anyFocused = searchFocused_ || composeFocused_;
     }
-    if (changed) RequestRender();
+    if (changed) {
+        if (focused) EnsureImeHost();
+        OverlaySetGameInputLocked(anyFocused);
+        RequestRender();
+    }
 }
 
 bool ChatPanel::SearchBoxHit(int x, int y) const
@@ -1375,10 +1541,16 @@ void ChatPanel::OnClick(int x, int y)
     }
     if (searchFocused_) SetSearchFocus(false);
     if (composeFocused_) SetComposeFocus(false);
-    if (y >= 6 && y <= topBand_ - 6 && x >= rc.right - 34 && x <= rc.right - 10) {
+
+    if (PointInRect(CloseButtonRect((int)rc.right, topBand_), x, y)) {
+        closeHot_ = false;
         if (closeButtonExits_) {
             closing_ = true;
             DestroyWindow(hwnd_);
+        } else if (gameSurfaceActive_.load()) {
+            // Hide the panel; the configured hotkey brings it back. SetGameVisible
+            // drops the published bitmap so the client stops drawing the last frame.
+            SetGameVisible(false);
         } else {
             ShowWindow(hwnd_, SW_HIDE);
         }
@@ -1414,6 +1586,7 @@ void ChatPanel::PostComposeStatus(std::wstring text)
 void ChatPanel::SetComposeFocus(bool focused)
 {
     bool changed = false;
+    bool anyFocused = false;
     {
         std::lock_guard<std::mutex> guard(lock_);
         changed = composeFocused_ != focused || composeCaretVisible_ != focused;
@@ -1426,13 +1599,19 @@ void ChatPanel::SetComposeFocus(bool focused)
             composeCaretOn_ = false;
             composeImeComp_.clear();
         }
+        anyFocused = searchFocused_ || composeFocused_;
     }
     if (focused) {
         StartComposeCaret();
+        EnsureImeHost();
     } else {
         StopComposeCaret();
+        ReleaseImeHost();
     }
-    if (changed) RequestRender();
+    if (changed) {
+        OverlaySetGameInputLocked(anyFocused);
+        RequestRender();
+    }
 }
 
 bool ChatPanel::ComposeBoxHit(int x, int y) const
@@ -1453,7 +1632,7 @@ bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
                 if (composeCursorPos_ > 0) --composeCursorPos_;
             }
             UpdateImeCompositionWindow();
-            RenderLayered();
+            RenderPanel();
             return true;
         }
         if (wp == VK_RIGHT) {
@@ -1462,7 +1641,7 @@ bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
                 if (composeCursorPos_ < (int)composeInputText_.size()) ++composeCursorPos_;
             }
             UpdateImeCompositionWindow();
-            RenderLayered();
+            RenderPanel();
             return true;
         }
         if (wp == VK_HOME) {
@@ -1471,7 +1650,7 @@ bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
                 composeCursorPos_ = 0;
             }
             UpdateImeCompositionWindow();
-            RenderLayered();
+            RenderPanel();
             return true;
         }
         if (wp == VK_END) {
@@ -1480,7 +1659,7 @@ bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
                 composeCursorPos_ = (int)composeInputText_.size();
             }
             UpdateImeCompositionWindow();
-            RenderLayered();
+            RenderPanel();
             return true;
         }
         if (wp == VK_DELETE) {
@@ -1491,7 +1670,7 @@ bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
                 }
             }
             UpdateImeCompositionWindow();
-            RenderLayered();
+            RenderPanel();
             return true;
         }
         if (wp == VK_BACK) {
@@ -1503,7 +1682,7 @@ bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
                 }
             }
             UpdateImeCompositionWindow();
-            RenderLayered();
+            RenderPanel();
             return true;
         }
         if (wp == VK_ESCAPE) {
@@ -1513,13 +1692,12 @@ bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
                 composeCursorPos_ = 0;
             }
             SetComposeFocus(false);
-            RenderLayered();
+            RenderPanel();
             return true;
         }
         if (wp == VK_RETURN) {
             std::wstring text;
             ComposeCallback cb;
-            HWND hwnd = nullptr;
             {
                 std::lock_guard<std::mutex> guard(lock_);
                 text = text::Trim(composeInputText_);
@@ -1527,15 +1705,14 @@ bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
                 composeInputText_.clear();
                 composeCursorPos_ = 0;
                 composeStatus_ = L"";
-                hwnd = hwnd_;
             }
             SetComposeFocus(false);
             // Release focus so the game can receive keyboard simulation
-            if (hwnd && GetFocus() == hwnd) SetFocus(nullptr);
+            FocusGameWindow();
             if (!text.empty() && cb) {
                 cb(text);
             }
-            RenderLayered();
+            RenderPanel();
             return true;
         }
         if (wp == VK_UP || wp == VK_DOWN || wp == VK_TAB) {
@@ -1556,7 +1733,7 @@ bool ChatPanel::HandleComposeKey(UINT msg, WPARAM wp)
             }
         }
         UpdateImeCompositionWindow();
-        RenderLayered();
+        RenderPanel();
         return true;
     }
 
@@ -1634,7 +1811,7 @@ LRESULT ChatPanel::HandleImeComposition(WPARAM wp, LPARAM lp)
                 composeImeComp_ = comp;
             }
         }
-        RenderLayered();
+        RenderPanel();
     }
 
     if (lp & GCS_RESULTSTR) {
@@ -1655,7 +1832,7 @@ LRESULT ChatPanel::HandleImeComposition(WPARAM wp, LPARAM lp)
             composeImeComp_.clear();
         }
         UpdateImeCompositionWindow();
-        RenderLayered();
+        RenderPanel();
     }
 
     ImmReleaseContext(hwnd_, himc);
@@ -1668,6 +1845,401 @@ LRESULT ChatPanel::HandleImeEndComposition()
         std::lock_guard<std::mutex> guard(lock_);
         composeImeComp_.clear();
     }
-    RenderLayered();
+    RenderPanel();
     return TRUE;
+}
+
+
+bool ChatPanel::OverlayGameSurfaceActive() const
+{
+    return gameSurfaceActive_.load();
+}
+
+void ChatPanel::OverlayUseGameSurface(HWND gameWindow)
+{
+    if (!hwnd_) return;
+    PostMessageW(hwnd_, kMsgOverlayUseSurface, reinterpret_cast<WPARAM>(gameWindow), 0);
+}
+
+void ChatPanel::OverlayReleaseGameSurface()
+{
+    if (!hwnd_) return;
+    PostMessageW(hwnd_, kMsgOverlayReleaseSurface, 0, 0);
+}
+
+bool ChatPanel::OverlayVisible() const
+{
+    return gameSurfaceActive_.load() && gameVisible_.load();
+}
+
+void ChatPanel::OverlaySetViewport(int width, int height)
+{
+    if (width <= 0 || height <= 0) return;
+    const int previousWidth = viewportWidth_.exchange(width);
+    const int previousHeight = viewportHeight_.exchange(height);
+    if (previousWidth == width && previousHeight == height) return;
+    if (hwnd_) PostMessageW(hwnd_, kMsgOverlayViewport, 0, 0);
+}
+
+bool ChatPanel::OverlayHitTest(int x, int y) const
+{
+    if (!gameSurfaceActive_.load() || !gameVisible_.load()) return false;
+    std::lock_guard<std::mutex> guard(frameLock_);
+    if (frameWidth_ <= 0 || frameHeight_ <= 0) return false;
+    return x >= frameX_ && x < frameX_ + frameWidth_ && y >= frameY_ && y < frameY_ + frameHeight_;
+}
+
+void ChatPanel::OverlayMouseMove(int x, int y)
+{
+    pendingMouseX_.store(x);
+    pendingMouseY_.store(y);
+    if (!hwnd_) return;
+    if (mouseMovePosted_.exchange(true)) return;
+    if (!PostMessageW(hwnd_, kMsgOverlayMouseMove, 0, 0)) mouseMovePosted_.store(false);
+}
+
+void ChatPanel::OverlayMouseButton(int button, bool down, int x, int y)
+{
+    if (!hwnd_) return;
+    {
+        std::lock_guard<std::mutex> guard(buttonLock_);
+        // Cap the queue: the panel only ever needs the in-flight click.
+        if (pendingButtons_.size() >= 16) pendingButtons_.erase(pendingButtons_.begin());
+        pendingButtons_.push_back(OverlayButtonEvent{ button, down, x, y });
+    }
+    if (buttonPosted_.exchange(true)) return;
+    if (!PostMessageW(hwnd_, kMsgOverlayMouseButton, 0, 0)) buttonPosted_.store(false);
+}
+
+void ChatPanel::OverlayMouseWheel(int delta, int x, int y)
+{
+    if (!hwnd_ || delta == 0) return;
+    pendingMouseX_.store(x);
+    pendingMouseY_.store(y);
+    PostMessageW(hwnd_, kMsgOverlayMouseWheel, (WPARAM)(INT_PTR)delta, 0);
+}
+
+bool ChatPanel::OverlayWantsTextInput() const
+{
+    return gameSurfaceActive_.load() && textInputWanted_.load();
+}
+
+bool ChatPanel::OverlayOwnsKeyboard() const
+{
+    return gameSurfaceActive_.load() && gameVisible_.load() && textInputWanted_.load();
+}
+
+void ChatPanel::OverlayKeyDown(int virtualKey)
+{
+    if (!hwnd_ || virtualKey <= 0) return;
+    PostMessageW(hwnd_, kMsgOverlayKey, (WPARAM)virtualKey, 0);
+}
+
+void ChatPanel::OverlayCharacter(unsigned int codepoint)
+{
+    if (!hwnd_ || codepoint == 0) return;
+    PostMessageW(hwnd_, kMsgOverlayChar, (WPARAM)codepoint, 0);
+}
+
+void ChatPanel::OverlaySetGameInputLocked(bool locked)
+{
+    textInputWanted_.store(locked);
+}
+
+bool ChatPanel::OverlayWantsCursor() const
+{
+    return gameSurfaceActive_.load() && gameVisible_.load() &&
+        (textInputWanted_.load() || pointerBusy_.load());
+}
+
+void ChatPanel::OverlaySetGameCursorVisible(bool available)
+{
+    if (cursorStateKnown_.load() && pendingCursorAvailable_.load() == available) return;
+    pendingCursorAvailable_.store(available);
+    if (!hwnd_) {
+        cursorStateKnown_.store(true);
+        gameCursorAvailable_.store(available);
+        return;
+    }
+    if (cursorStatePosted_.exchange(true)) return;
+    if (!PostMessageW(hwnd_, kMsgOverlayCursorState, 0, 0)) cursorStatePosted_.store(false);
+}
+
+bool ChatPanel::OverlayAcquireFrame(OverlayFrame& out) const
+{
+    std::lock_guard<std::mutex> guard(frameLock_);
+    if (!gameVisible_.load()) return false;
+    if (!framePixels_ || frameWidth_ <= 0 || frameHeight_ <= 0) return false;
+    out.pixels = framePixels_;
+    out.width = frameWidth_;
+    out.height = frameHeight_;
+    out.x = frameX_;
+    out.y = frameY_;
+    out.revision = frameRevision_;
+    return true;
+}
+
+void ChatPanel::ActivateGameSurface(HWND gameWindow)
+{
+    if (!hwnd_) return;
+    if (gameSurfaceActive_.load()) {
+        if (gameWindow && IsWindow(gameWindow)) gameWindow_ = gameWindow;
+        return;
+    }
+
+    gameWindow_ = (gameWindow && IsWindow(gameWindow)) ? gameWindow : game_window::Find(nullptr);
+    if (!gameWindow_) {
+        return;
+    }
+
+    RECT rect = ClampWindowRect(LoadOverlayRect(overlayGeometryPath_));
+    gameX_ = rect.left;
+    gameY_ = rect.top;
+    SetWindowPos(hwnd_, nullptr, 0, 0, rect.right - rect.left, rect.bottom - rect.top,
+        SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    ReleaseImeHost();
+
+    gameSurfaceActive_.store(true);
+    gameVisible_.store(true);
+    ClampGameRect();
+
+    RECT client{};
+    GetClientRect(hwnd_, &client);
+    LayoutSearchBox(client);
+    LayoutComposeBox(client);
+    ScrollToEnd();
+}
+
+void ChatPanel::DeactivateGameSurface()
+{
+    if (!gameSurfaceActive_.load()) return;
+    SaveOverlayGeometry();
+
+    ReleaseImeHost();
+    gameSurfaceActive_.store(false);
+    gameVisible_.store(true);
+    textInputWanted_.store(false);
+    dragActive_ = false;
+    resizeActive_ = false;
+    SyncPointerBusy();
+    {
+        std::lock_guard<std::mutex> guard(frameLock_);
+        framePixels_.reset();
+        frameWidth_ = 0;
+        frameHeight_ = 0;
+        frameX_ = 0;
+        frameY_ = 0;
+        frameRevision_ = 0;
+    }
+}
+
+void ChatPanel::ClampGameRect()
+{
+    if (!hwnd_ || !gameSurfaceActive_.load()) return;
+    RECT client{};
+    if (!GetClientRect(hwnd_, &client)) return;
+    const int width = (int)(client.right - client.left);
+    const int height = (int)(client.bottom - client.top);
+    const int viewWidth = viewportWidth_.load();
+    const int viewHeight = viewportHeight_.load();
+
+    int nextX = (std::max)(0, gameX_);
+    int nextY = (std::max)(0, gameY_);
+    if (viewWidth > 0 && nextX + width > viewWidth) nextX = (std::max)(0, viewWidth - width);
+    if (viewHeight > 0 && nextY + height > viewHeight) nextY = (std::max)(0, viewHeight - height);
+    if (nextX == gameX_ && nextY == gameY_) return;
+
+    gameX_ = nextX;
+    gameY_ = nextY;
+    PublishFramePosition();
+}
+
+void ChatPanel::SetGameVisible(bool visible)
+{
+    if (gameVisible_.load() == visible) return;
+    gameVisible_.store(visible);
+    dragActive_ = false;
+    resizeActive_ = false;
+    SyncPointerBusy();
+    gripHot_ = false;
+    closeHot_ = false;
+    if (!visible) {
+        SetComposeFocus(false);
+        SetSearchFocus(false);
+        ReleaseImeHost();
+        FocusGameWindow();
+        std::lock_guard<std::mutex> guard(frameLock_);
+        framePixels_.reset();
+        frameWidth_ = 0;
+        frameHeight_ = 0;
+        frameRevision_ = 0;
+    }
+    RequestRender();
+}
+
+void ChatPanel::SetGameCursorAvailable(bool available)
+{
+    cursorStateKnown_.store(true);
+    if (gameCursorAvailable_.exchange(available) == available) return;
+
+    if (!available) {
+        if (dragActive_ || resizeActive_ || gripHot_ || closeHot_) {
+            dragActive_ = false;
+            resizeActive_ = false;
+            gripHot_ = false;
+            closeHot_ = false;
+            SyncPointerBusy();
+        }
+    }
+    RequestRender();
+}
+
+void ChatPanel::SyncPointerBusy()
+{
+    pointerBusy_.store(dragActive_ || resizeActive_);
+}
+
+bool ChatPanel::PointerUsable() const
+{
+    return !cursorStateKnown_.load() || gameCursorAvailable_.load();
+}
+
+void ChatPanel::HandleOverlayMouseMove(int x, int y)
+{
+    if (!gameSurfaceActive_.load()) return;
+    if (!PointerUsable()) return;
+
+    if (dragActive_) {
+        const int deltaX = x - dragLastX_;
+        const int deltaY = y - dragLastY_;
+        if (deltaX == 0 && deltaY == 0) return;
+        dragLastX_ = x;
+        dragLastY_ = y;
+        gameX_ += deltaX;
+        gameY_ += deltaY;
+        ClampGameRect();
+        PublishFramePosition();
+        return;
+    }
+
+    if (!resizeActive_) {
+        RECT client{};
+        if (!GetClientRect(hwnd_, &client)) return;
+        const int localX = x - gameX_;
+        const int localY = y - gameY_;
+        const RECT grip = ResizeGripRect((int)client.right, (int)client.bottom);
+        const bool overGrip = localX >= grip.left && localY >= grip.top &&
+            localX <= (int)client.right && localY <= (int)client.bottom;
+        const bool overClose = PointInRect(CloseButtonRect((int)client.right, topBand_), localX, localY);
+        if (overGrip != gripHot_ || overClose != closeHot_) {
+            gripHot_ = overGrip;
+            closeHot_ = overClose;
+            RequestRender();
+        }
+        return;
+    }
+
+    RECT client{};
+    if (!GetClientRect(hwnd_, &client)) return;
+    const int width = (int)(client.right - client.left);
+    const int height = (int)(client.bottom - client.top);
+    constexpr int minWidth = 420;
+    constexpr int minHeight = 260;
+
+    int nextWidth = (std::max)(minWidth, width + (x - dragLastX_));
+    int nextHeight = (std::max)(minHeight, height + (y - dragLastY_));
+    const int viewWidth = viewportWidth_.load();
+    const int viewHeight = viewportHeight_.load();
+    if (viewWidth > 0) nextWidth = (std::min)(nextWidth, (std::max)(minWidth, viewWidth - gameX_));
+    if (viewHeight > 0) nextHeight = (std::min)(nextHeight, (std::max)(minHeight, viewHeight - gameY_));
+    if (nextWidth == width && nextHeight == height) return;
+
+    dragLastX_ = x;
+    dragLastY_ = y;
+    SetWindowPos(hwnd_, nullptr, 0, 0, nextWidth, nextHeight, SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE);
+    RECT rc{ 0, 0, nextWidth, nextHeight };
+    LayoutSearchBox(rc);
+    LayoutComposeBox(rc);
+    ScrollToEnd();
+}
+
+void ChatPanel::HandleOverlayMouseButton(int button, bool down, int x, int y)
+{
+    if (!gameSurfaceActive_.load() || !gameVisible_.load()) return;
+    if (button != 0) return;
+    if (!PointerUsable()) return;
+
+    if (!down) {
+        dragActive_ = false;
+        resizeActive_ = false;
+        SyncPointerBusy();
+        return;
+    }
+
+    RECT rc{};
+    if (!GetClientRect(hwnd_, &rc)) return;
+    const int localX = x - gameX_;
+    const int localY = y - gameY_;
+    if (localX < 0 || localY < 0 || localX >= (int)rc.right || localY >= (int)rc.bottom) return;
+
+    const RECT grip = ResizeGripRect((int)rc.right, (int)rc.bottom);
+    if (localX >= grip.left && localY >= grip.top) {
+        dragActive_ = false;
+        resizeActive_ = true;
+        SyncPointerBusy();
+        gripHot_ = true;
+        dragLastX_ = x;
+        dragLastY_ = y;
+        RequestRender();
+        return;
+    }
+
+    if (PointInRect(CloseButtonRect((int)rc.right, topBand_), localX, localY) ||
+        SearchBoxHit(localX, localY) || ComposeBoxHit(localX, localY)) {
+        dragActive_ = false;
+        resizeActive_ = false;
+        SyncPointerBusy();
+        OnClick(localX, localY);
+        return;
+    }
+
+    if (localY < topBand_) {
+        resizeActive_ = false;
+        dragActive_ = true;
+        SyncPointerBusy();
+        closeHot_ = false;
+        dragLastX_ = x;
+        dragLastY_ = y;
+        RequestRender();
+        return;
+    }
+
+    dragActive_ = false;
+    resizeActive_ = false;
+    SyncPointerBusy();
+    OnClick(localX, localY);
+}
+
+void ChatPanel::EnsureImeHost()
+{
+    if (!hwnd_ || !gameSurfaceActive_.load() || imeHostActive_) return;
+    imeHostActive_ = true;
+    SetWindowPos(hwnd_, HWND_TOPMOST, -32000, -32000, 0, 0,
+        SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    SetForegroundWindow(hwnd_);
+    SetFocus(hwnd_);
+}
+
+void ChatPanel::ReleaseImeHost()
+{
+    if (!hwnd_ || !imeHostActive_) return;
+    imeHostActive_ = false;
+    ShowWindow(hwnd_, SW_HIDE);
+}
+
+void ChatPanel::FocusGameWindow()
+{
+    ReleaseImeHost();
+    HWND game = (gameWindow_ && IsWindow(gameWindow_)) ? gameWindow_ : game_window::Find(nullptr);
+    if (game) game_window::Activate(game);
 }
